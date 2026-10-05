@@ -15,6 +15,8 @@ from app.db.repository import get_repository
 from app.schemas.records import (
     EntityDetail,
     EntityMention,
+    EntityTimeline,
+    GraphView,
     EntitySummary,
     KnowledgeStats,
     LinkedNode,
@@ -24,6 +26,7 @@ from app.schemas.records import (
     SourceRecord,
     SourceSummary,
 )
+from app.services.graph import entity_timeline, neighbourhood, segment_label
 from app.services.ingestion import delete_source
 from app.services.vector_store import VectorStoreError
 
@@ -108,15 +111,28 @@ async def get_segment(segment_id: str) -> SegmentDetail:
         ]
         segments = repo.get_segments(other_segment_ids)
         entities = repo.get_entities(other_entity_ids)
+        filenames: dict[str, str | None] = {source.id: source.filename}
 
         links: list[LinkedNode] = []
         for edge, direction in edges:
             node_kind = edge.dst_kind if direction == "out" else edge.src_kind
             node_id = edge.dst_id if direction == "out" else edge.src_id
+            extra: dict[str, str | None] = {}
             label: str | None = None
             if node_kind is NodeKind.SEGMENT and node_id in segments:
                 other = segments[node_id]
-                label = f"{other.modality.value} {other.locator.display() or ''}".strip()
+                if other.source_id not in filenames:
+                    other_source = repo.get_source(other.source_id)
+                    filenames[other.source_id] = other_source.filename if other_source else None
+                label = segment_label(other, filenames[other.source_id])
+                extra = {
+                    "modality": other.modality.value,
+                    "source_id": other.source_id,
+                    "source_filename": filenames[other.source_id],
+                    "locator": other.locator.display(),
+                    "frame_path": other.frame_path,
+                    "snippet": (other.text or other.visual_summary or "")[:240] or None,
+                }
             elif node_kind is NodeKind.ENTITY and node_id in entities:
                 label = entities[node_id].name
             links.append(
@@ -126,6 +142,7 @@ async def get_segment(segment_id: str) -> SegmentDetail:
                     node_kind=node_kind,
                     node_id=node_id,
                     label=label,
+                    **extra,
                 )
             )
         return SegmentDetail(
@@ -163,6 +180,46 @@ async def get_entity(entity_id: str) -> EntityDetail:
     if detail is None:
         raise _not_found("Entity", entity_id)
     return detail
+
+
+@router.get("/entities/{entity_id}/timeline", response_model=EntityTimeline)
+async def get_entity_timeline(entity_id: str) -> EntityTimeline:
+    """Every mention of an entity (and its same_as aliases) in time order.
+
+    Sources are placed by ``recorded_at`` when it was given at upload, else
+    by ingestion time; mentions inside a source by their offset.
+    """
+    timeline = await to_thread.run_sync(lambda: entity_timeline(get_repository(), entity_id))
+    if timeline is None:
+        raise _not_found("Entity", entity_id)
+    return timeline
+
+
+@router.get("/graph/{node_id}", response_model=GraphView, tags=["knowledge"])
+async def get_graph(
+    node_id: str,
+    depth: int = Query(default=1, ge=1, le=3),
+    limit: int = Query(default=120, ge=1, le=500),
+    include_next: bool = Query(default=False, description="Include within-source 'next' edges."),
+) -> GraphView:
+    """Neighbourhood of a segment or entity: nodes and typed, weighted edges."""
+    view = await to_thread.run_sync(
+        lambda: neighbourhood(get_repository(), node_id, depth=depth, limit=limit, include_next=include_next)
+    )
+    if view is None:
+        raise _not_found("Node", node_id)
+    return view
+
+
+@router.post("/graph/relink", tags=["knowledge"])
+async def relink_graph() -> dict[str, int]:
+    """Recompute every cross-modal and temporal link (e.g. after tuning thresholds)."""
+    from app.services.linker import relink_all
+
+    try:
+        return await to_thread.run_sync(relink_all)
+    except VectorStoreError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.post("/demo/seed", tags=["system"])

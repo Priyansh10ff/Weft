@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -90,6 +91,7 @@ async def handle_upload(
     *,
     background: bool = False,
     force: bool = False,
+    recorded_at: datetime | None = None,
 ) -> KnowledgeUploadResponse:
     from app.services.ingestion import file_fingerprint, ingest_nodes
     from app.services.jobs import get_job_manager
@@ -135,8 +137,10 @@ async def handle_upload(
                 warnings=["Identical file already ingested; pass force=true to re-process."],
             )
 
+    extra_attributes = {"recorded_at": recorded_at.isoformat()} if recorded_at else {}
+
     if background:
-        job = get_job_manager().submit(asset, path)
+        job = get_job_manager().submit(asset, path, source_attributes=extra_attributes)
         response.status_code = status.HTTP_202_ACCEPTED
         return KnowledgeUploadResponse(
             success=True,
@@ -162,6 +166,7 @@ async def handle_upload(
                 pipeline.nodes,
                 file_path=path,
                 source_attributes={
+                    **extra_attributes,
                     "warnings": pipeline.warnings,
                     "enrichment": pipeline.enrichment,
                 },

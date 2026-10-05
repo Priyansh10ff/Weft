@@ -40,6 +40,8 @@ export const api = {
   segment: (id) => request(`/segments/${encodeURIComponent(id)}`),
   entities: (q, limit = 200) => request(`/entities?limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ""}`),
   entity: (id) => request(`/entities/${encodeURIComponent(id)}`),
+  entityTimeline: (id) => request(`/entities/${encodeURIComponent(id)}/timeline`),
+  graph: (id, depth = 1) => request(`/graph/${encodeURIComponent(id)}?depth=${depth}`),
   job: (id) => request(`/jobs/${encodeURIComponent(id)}`),
   query: (query, limit = 8, signal) => request("/query", { method: "POST", body: { query, limit }, signal }),
   compare: (query, limit = 8, signal) => request("/query/compare", { method: "POST", body: { query, limit }, signal }),

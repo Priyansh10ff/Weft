@@ -2,7 +2,7 @@
 // provenance and every relation it has in the graph.
 
 import { api } from "./api.js";
-import { h, clear, icon, modChip, locatorText, meter, fmtClock, emptyState, skeletonLines, truncate, pct, fill } from "./ui.js";
+import { h, clear, icon, modChip, locatorText, meter, fmtClock, emptyState, skeletonLines, truncate, pct, thumb, fill } from "./ui.js";
 
 let drawer;
 let panel;
@@ -151,15 +151,51 @@ function provenance(detail) {
   return h("dl", { class: "kv" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]));
 }
 
+const LINK_PHRASE = {
+  depicts: { out: "Explained in", in: "Shown in" },
+  corroborates: { out: "Also stated in", in: "Also stated in" },
+  co_occurs: { out: "Same scene, later", in: "Same scene, earlier" },
+  shows_same: { out: "Slide first shown", in: "Slide shown again" },
+};
+
+function linkCard(link, onOpenSegment) {
+  const rel = link.relation.relation;
+  const phrase = LINK_PHRASE[rel]?.[link.direction] || rel.replace("_", " ");
+  const attrs = link.relation.attributes || {};
+  const reasons = [];
+  if (attrs.shared_entities?.length) reasons.push(`shared: ${attrs.shared_entities.slice(0, 4).join(", ")}`);
+  if (attrs.similarity != null) reasons.push(`similarity ${pct(attrs.similarity)}`);
+  if (attrs.reason) reasons.push(attrs.reason);
+  const open = () => onOpenSegment(link.node_id);
+  return h("article", {
+    class: `link-card mod-${link.modality || "x"}`, tabindex: "0", role: "button",
+    onclick: open, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } },
+  },
+  thumb(link.frame_path, link.modality),
+  h("div", { class: "link-body" },
+    h("p", { class: "link-phrase" }, phrase),
+    h("div", { class: "ev-head" },
+      link.modality ? modChip(link.modality) : null,
+      h("span", { class: "ev-source", title: link.source_filename || "" }, link.source_filename || link.label || "Segment"),
+      link.locator ? h("span", { class: "loc" }, link.locator) : null,
+    ),
+    link.snippet ? h("p", { class: "ev-visual" }, truncate(link.snippet, 160)) : null,
+    reasons.length ? h("p", { class: "link-why" }, reasons.join(" · ")) : null,
+  ),
+  h("span", { class: "num link-conf", title: "Link confidence" }, pct(link.relation.confidence)));
+}
+
 function relations(detail, onOpenSegment) {
-  const groups = { previous: [], next: [], speakers: [], other: [] };
+  const groups = { previous: [], next: [], speakers: [], linked: [] };
   for (const link of detail.links || []) {
     const rel = link.relation.relation;
     if (rel === "mentions") continue;
     if (rel === "next") (link.direction === "out" ? groups.next : groups.previous).push(link);
     else if (rel === "spoken_by") groups.speakers.push(link);
-    else groups.other.push(link);
+    else if (link.node_kind === "segment") groups.linked.push(link);
   }
+  const order = { depicts: 0, co_occurs: 1, shows_same: 2, corroborates: 3 };
+  groups.linked.sort((a, b) => (order[a.relation.relation] ?? 9) - (order[b.relation.relation] ?? 9) || b.relation.confidence - a.relation.confidence);
   const nav = h("div", { class: "seg-nav" },
     groups.previous[0]
       ? h("button", { class: "btn btn-sm", type: "button", onclick: () => onOpenSegment(groups.previous[0].node_id) }, icon("arrowLeft", 14), "Previous")
@@ -168,16 +204,10 @@ function relations(detail, onOpenSegment) {
       ? h("button", { class: "btn btn-sm", type: "button", onclick: () => onOpenSegment(groups.next[0].node_id) }, "Next", icon("arrowRight", 14))
       : h("span"),
   );
-  const other = groups.other.length
-    ? h("ul", { class: "rel-list" }, groups.other.map((link) => h("li", {},
-      h("span", { class: "tag" }, link.relation.relation.replace("_", " ")),
-      link.node_kind === "segment"
-        ? h("button", { class: "link", type: "button", onclick: () => onOpenSegment(link.node_id) }, link.label || "segment")
-        : h("a", { class: "link", href: `#/entities/${link.node_id}` }, link.label || link.node_id),
-      h("span", { class: "faint num" }, pct(link.relation.confidence)),
-    )))
+  const linked = groups.linked.length
+    ? h("div", { class: "link-list" }, groups.linked.map((link) => linkCard(link, onOpenSegment)))
     : null;
-  return { nav, speakers: groups.speakers, other };
+  return { nav, speakers: groups.speakers, linked };
 }
 
 export async function openEvidence(segmentId, { query = "" } = {}) {
@@ -235,7 +265,7 @@ export async function openEvidence(segmentId, { query = "" } = {}) {
       segment.visual_summary ? section("Shown", h("p", { class: "prose" }, segment.visual_summary)) : null,
       ocrText ? section("Text on screen", h("p", { class: "prose mono-prose" }, truncate(ocrText, 1200))) : null,
       entityChips ? section("Entities", entityChips) : null,
-      rel.other ? section("Linked evidence", rel.other) : null,
+      rel.linked ? section(`Linked evidence · ${rel.linked.childElementCount}`, rel.linked) : null,
       section("Provenance", provenance(detail)),
     ),
   );

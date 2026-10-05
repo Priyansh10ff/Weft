@@ -205,6 +205,46 @@ class VectorStore:
         """Nearest segments when only extracted text was embedded (baseline)."""
         return self._search(self.text_only_collection, query, limit, min_score, max_per_source)
 
+    def similar(
+        self, text: str, *, exclude_source_id: str | None = None, limit: int = 8
+    ) -> list[VectorHit]:
+        """Nearest segments to ``text`` in the multimodal index, optionally from other sources only.
+
+        Used by the cross-modal linker; no relevance threshold or per-source
+        cap is applied here, the linker does its own scoring.
+        """
+        if not text.strip():
+            return []
+        try:
+            available = self.collection.count()
+            if available == 0:
+                return []
+            kwargs: dict[str, Any] = {
+                "query_texts": [text],
+                "n_results": min(limit, available),
+                "include": ["documents", "metadatas", "distances"],
+            }
+            if exclude_source_id:
+                kwargs["where"] = {"source_id": {"$ne": exclude_source_id}}
+            results = self.collection.query(**kwargs)
+        except Exception as exc:
+            raise VectorStoreError("Unable to query the ChromaDB index.") from exc
+        return [
+            VectorHit(
+                segment_id=str(segment_id),
+                distance=float(distance),
+                similarity_score=max(0.0, min(1.0, 1.0 - float(distance))),
+                document=document or "",
+                metadata=dict(metadata or {}),
+            )
+            for segment_id, document, metadata, distance in zip(
+                results.get("ids", [[]])[0],
+                results.get("documents", [[]])[0],
+                results.get("metadatas", [[]])[0],
+                results.get("distances", [[]])[0],
+            )
+        ]
+
     def _search(
         self,
         collection: Any,

@@ -128,3 +128,11 @@ class FakeGemini:
 @pytest.fixture()
 def fake_gemini():
     return FakeGemini
+
+
+def _fake_similar(self, text, *, exclude_source_id=None, limit=8):
+    pool = {k: v for k, v in self.multimodal.items() if v[1].get("source_id") != exclude_source_id}
+    return self._search(pool, text, limit)
+
+
+FakeVectorStore.similar = _fake_similar

@@ -75,58 +75,101 @@ export function renderEntities(root, params) {
   return () => { disposed = true; };
 }
 
+function mentionRow(seg, query, extra = null) {
+  const open = () => openEvidence(seg.id, { query });
+  return h("li", {
+    class: `seg-row mod-${seg.modality}`, tabindex: "0", onclick: open,
+    onkeydown: (e) => { if (e.key === "Enter") open(); },
+  },
+  h("span", { class: "seg-loc loc" }, segmentLabel(seg)),
+  h("div", { class: "seg-body" },
+    extra,
+    seg.text ? h("p", { class: "ev-text" }, truncate(seg.text, 220)) : null,
+    seg.visual_summary ? h("p", { class: "ev-visual" }, h("span", { class: "faint" }, "Shown: "), truncate(seg.visual_summary, 160)) : null,
+  ),
+  h("span", { class: "seg-conf" }, meter(seg.confidence)));
+}
+
+const dayFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+function timelineView(timeline, query) {
+  if (!timeline.entries.length) return emptyState({ title: "No mentions", body: "This entity isn't linked to any segment." });
+  const days = new Map();
+  for (const entry of timeline.entries) {
+    const key = dayFormat.format(new Date(entry.when));
+    if (!days.has(key)) days.set(key, []);
+    days.get(key).push(entry);
+  }
+  return h("ol", { class: "timeline-list" }, [...days.entries()].map(([day, entries]) => h("li", { class: "tl-day" },
+    h("div", { class: "tl-date" },
+      h("span", { class: "tl-dot" }),
+      h("span", {}, day),
+      entries[0].when_source === "ingested_at" ? h("span", { class: "faint", title: "No recording date was given; using upload time" }, "uploaded") : null,
+    ),
+    h("ol", { class: "seg-list card" }, entries.map((entry) => mentionRow(entry.segment, query,
+      h("div", { class: "row-inline mention-src" }, modChip(entry.source.modality),
+        h("a", { class: "link", href: `#/sources/${entry.source.id}`, onclick: (e) => e.stopPropagation() }, entry.source.filename))))),
+  )));
+}
+
+function bySourceView(timeline, query) {
+  const groups = new Map();
+  for (const entry of timeline.entries) {
+    if (!groups.has(entry.source.id)) groups.set(entry.source.id, { source: entry.source, segs: [] });
+    groups.get(entry.source.id).segs.push(entry.segment);
+  }
+  if (!groups.size) return emptyState({ title: "No mentions", body: "This entity isn't linked to any segment." });
+  return [...groups.values()].map(({ source, segs }) => h("section", { class: "entity-group" },
+    h("div", { class: "group-head" },
+      modChip(source.modality),
+      h("a", { class: "link", href: `#/sources/${source.id}` }, source.filename),
+      h("span", { class: "faint" }, `${segs.length}`),
+    ),
+    h("ol", { class: "seg-list card" }, segs.map((seg) => mentionRow(seg, query))),
+  ));
+}
+
 export function renderEntity(root, params, id) {
   let disposed = false;
   put(root, h("div", { class: "card-pad" }, skeletonLines(5)));
 
-  Promise.all([api.entity(id), api.sources()]).then(([detail, sources]) => {
+  api.entityTimeline(id).then((timeline) => {
     if (disposed) return;
-    const names = new Map(sources.map((s) => [s.source.id, s.source]));
-    const bySource = new Map();
-    for (const seg of detail.segments) {
-      if (!bySource.has(seg.source_id)) bySource.set(seg.source_id, []);
-      bySource.get(seg.source_id).push(seg);
-    }
-    const modalities = [...new Set(detail.segments.map((s) => s.modality))];
+    const { entity, aliases, entries } = timeline;
+    const sourceCount = new Set(entries.map((e) => e.source.id)).size;
+    const modalities = [...new Set(entries.map((e) => e.segment.modality))];
+    const query = [entity.name, ...aliases.map((a) => a.name)].join(" ");
+    let mode = params.get("view") === "sources" ? "sources" : "timeline";
+    const body = h("div", { class: "entity-body" });
+    const tabs = h("div", { class: "tabs", role: "tablist" });
 
-    fill(root, 
+    const draw = () => {
+      fill(tabs,
+        ["timeline", "sources"].map((key) => h("button", {
+          class: "tab", type: "button", role: "tab", "aria-selected": String(mode === key),
+          onclick: () => { mode = key; draw(); },
+        }, key === "timeline" ? "Timeline" : "By source")));
+      fill(body, mode === "timeline" ? timelineView(timeline, query) : bySourceView(timeline, query));
+    };
+
+    fill(root,
       h("a", { class: "back", href: "#/entities" }, icon("arrowLeft", 14), "Entities"),
       h("header", { class: "page-head" },
         h("div", {},
-          h("span", { class: "tag" }, detail.entity.entity_type),
-          h("h1", { class: "source-title" }, detail.entity.name),
+          h("span", { class: "tag" }, entity.entity_type),
+          h("h1", { class: "source-title" }, entity.name),
           h("p", { class: "muted meta-line" },
-            `${detail.segments.length} mention${detail.segments.length === 1 ? "" : "s"} across ${bySource.size} source${bySource.size === 1 ? "" : "s"}`,
+            `${entries.length} mention${entries.length === 1 ? "" : "s"} across ${sourceCount} source${sourceCount === 1 ? "" : "s"}`,
             modalities.length > 1 ? ` and ${modalities.length} modalities` : "",
           ),
+          aliases.length ? h("p", { class: "faint alias-line" }, "Also seen as: ", aliases.map((a) => a.name).join(", ")) : null,
         ),
         h("div", { class: "head-actions" }, modalities.map(modChip)),
       ),
-      detail.segments.length
-        ? [...bySource.entries()].map(([sourceId, segs]) => {
-          const src = names.get(sourceId);
-          return h("section", { class: "entity-group" },
-            h("div", { class: "group-head" },
-              src ? modChip(src.modality) : null,
-              h("a", { class: "link", href: `#/sources/${sourceId}` }, src?.filename || sourceId),
-              h("span", { class: "faint" }, `${segs.length}`),
-            ),
-            h("ol", { class: "seg-list card" }, segs.map((seg) => h("li", {
-              class: `seg-row mod-${seg.modality}`, tabindex: "0",
-              onclick: () => openEvidence(seg.id, { query: detail.entity.name }),
-              onkeydown: (e) => { if (e.key === "Enter") openEvidence(seg.id, { query: detail.entity.name }); },
-            },
-            h("span", { class: "seg-loc loc" }, segmentLabel(seg)),
-            h("div", { class: "seg-body" },
-              seg.text ? h("p", { class: "ev-text" }, truncate(seg.text, 220)) : null,
-              seg.visual_summary ? h("p", { class: "ev-visual" }, h("span", { class: "faint" }, "Shown: "), truncate(seg.visual_summary, 160)) : null,
-            ),
-            h("span", { class: "seg-conf" }, meter(seg.confidence)),
-            ))),
-          );
-        })
-        : emptyState({ title: "No mentions", body: "This entity isn't linked to any segment." }),
+      tabs,
+      body,
     );
+    draw();
   }).catch((error) => {
     if (disposed) return;
     fill(root, h("a", { class: "back", href: "#/entities" }, icon("arrowLeft", 14), "Entities"),

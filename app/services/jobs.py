@@ -41,13 +41,16 @@ class JobManager:
     def repo(self) -> KnowledgeRepository:
         return self._repository or get_repository()
 
-    def submit(self, asset: SourceAsset, file_path: Path) -> JobRecord:
+    def submit(
+        self, asset: SourceAsset, file_path: Path, source_attributes: dict | None = None
+    ) -> JobRecord:
         job = JobRecord(
             source_id=str(asset.source_id),
             filename=asset.filename,
             modality=asset.modality,
             file_path=str(file_path),
             content_type=asset.content_type,
+            source_attributes=dict(source_attributes or {}),
         )
         self.repo.create_job(job)
         self._schedule(job)
@@ -83,7 +86,11 @@ class JobManager:
                 asset,
                 pipeline.nodes,
                 file_path=Path(job.file_path),
-                source_attributes={"warnings": pipeline.warnings, "enrichment": pipeline.enrichment},
+                source_attributes={
+                    **job.source_attributes,
+                    "warnings": pipeline.warnings,
+                    "enrichment": pipeline.enrichment,
+                },
                 repository=repo,
             )
         except (ProcessingFailed, VectorStoreError) as exc:
@@ -106,6 +113,7 @@ class JobManager:
                 "segments": len(result.segments),
                 "entities": result.entity_count,
                 "relations": result.relation_count,
+                "links": result.link_count,
             },
         )
 

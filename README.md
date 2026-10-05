@@ -75,7 +75,7 @@ index over segment IDs and can be rebuilt from SQLite at any time.
 | `sources` | One row per uploaded asset: filename, modality, SHA-256, size, storage key, index status. |
 | `segments` | One row per unit of evidence (video window, speech span, PDF page, image, JSON record): text, visual summary, locator (start/end seconds, page, image region, label), frame path, confidence, extractor. |
 | `entities` | Named concepts, deduplicated across files by a normalized name (`checkout-service` = `Checkout Service`). |
-| `relations` | Typed, directed, confidence-weighted edges: `mentions` (segment→entity), `spoken_by` (speech→speaker) and `next` (segment→following segment) today; `co_occurs`, `depicts`, `corroborates`, `same_as`, `supersedes` are reserved for cross-modal linking. |
+| `relations` | Typed, directed, confidence-weighted edges with the reason they exist: `mentions`, `spoken_by` and `next` from ingestion; `co_occurs`, `shows_same`, `depicts`, `corroborates` and `same_as` from the cross-modal linker (see below). |
 
 Confidence is the extractor's own value when one exists (Whisper: `exp(avg_logprob) × (1 − no_speech_prob)`;
 video windows average speech and vision), otherwise a per-extractor prior (structured input 1.0, PDF text layer 0.9, Whisper 0.85,
@@ -90,6 +90,24 @@ python -m app.cli reindex         # rebuild the Chroma index from SQLite
 python -m pytest tests            # unit + API + Chroma integration tests
 ```
 
+## Cross-Modal and Temporal Links
+
+After every ingest, `app/services/linker.py` connects the new segments to the rest of the graph:
+
+| Relation | Meaning | How it is decided |
+| --- | --- | --- |
+| `co_occurs` | Two windows of the same video scene: different speech while the same visual was on screen | Same scene index |
+| `shows_same` | A slide or frame shown again later in the recording | Perceptual-hash duplicate keyframe |
+| `depicts` | A visual segment (diagram, screenshot, slide, page render) illustrates what a speech/text segment in another source says | Shared entities and/or embedding similarity; the side with visual evidence is the source of the edge |
+| `corroborates` | Two segments in different sources state the same thing | Same signals, both sides textual (or both visual) |
+| `same_as` | Two entities are the same thing under different surface forms | Normalized name, leading article dropped, last word singularized |
+
+A pair is linked when it shares at least two entities (after `same_as` resolution), or one entity plus cosine similarity ≥ 0.42, or similarity ≥ 0.62 alone; each segment keeps its five strongest links. Every edge stores its shared entities, similarity and method, so the evidence panel can show *why* two pieces of evidence are connected.
+
+**Time.** Pass `recorded_at` (ISO 8601) on any `/upload/*` call to place a source in time; otherwise its upload time is used. `GET /entities/{id}/timeline` returns every mention of an entity and its aliases in time order, which is how questions like "how did the p99 latency change" are answered from evidence. The workspace shows this as the Timeline tab on each entity.
+
+`python -m app.cli relink` (or `POST /graph/relink`) recomputes every link, e.g. after tuning thresholds.
+
 ## API Endpoints
 
 | Endpoint | Purpose |
@@ -101,6 +119,9 @@ python -m pytest tests            # unit + API + Chroma integration tests
 | `POST /upload/json` | Upload a JSON file — a single object or an array of `{text/content, locator, source, entities}` records — and index one node per record. For structured data you already have (tickets, logs, metadata) that doesn't need OCR/ASR/vision. |
 | `POST /query` | Search the combined transcript/text + visual-summary multimodal index and get back a synthesized, cross-modal-grounded `answer` alongside the raw ranked results. |
 | `POST /query/compare` | Compare the top multimodal result with the top transcript-only baseline result. |
+| `GET /entities/{id}/timeline` | Every mention of an entity (and its aliases) ordered by `recorded_at` / upload time and position. |
+| `GET /graph/{node_id}?depth=1` | Neighbourhood of a segment or entity: nodes and typed, weighted edges. |
+| `POST /graph/relink` | Recompute all cross-modal and temporal links. |
 | `GET /jobs`, `GET /jobs/{id}` | Background ingestion jobs: status, stage, progress, warnings, result. |
 | `GET /stats` | Counts of sources, segments, entities and relations by modality/type. |
 | `GET /sources`, `GET /sources/{id}` | List sources, or one source with all its segments. |

@@ -3,6 +3,7 @@
     python -m app.cli stats           # counts per table / modality / relation
     python -m app.cli reindex         # rebuild Chroma from SQLite
     python -m app.cli import-legacy   # move pre-SQLite Chroma data into SQLite
+    python -m app.cli relink          # recompute cross-modal / temporal links
 """
 
 from __future__ import annotations
@@ -126,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("stats", help="Print knowledge-store counts.")
     sub.add_parser("reindex", help="Drop and rebuild the vector index from SQLite.")
+    sub.add_parser("relink", help="Recompute every cross-modal and temporal link.")
     legacy = sub.add_parser("import-legacy", help="Import the pre-SQLite Chroma collection.")
     legacy.add_argument("--collection", default=LEGACY_COLLECTION)
     args = parser.parse_args(argv)
@@ -135,6 +137,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "reindex":
         total = rebuild_index()
         print(f"Re-indexed {total} segments.")
+    elif args.command == "relink":
+        from app.services.linker import relink_all
+
+        print(json.dumps(relink_all(), indent=2))
     elif args.command == "import-legacy":
         counts = import_legacy(args.collection)
         print(f"Imported {counts['sources']} sources / {counts['segments']} segments.")

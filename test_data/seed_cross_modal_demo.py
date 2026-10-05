@@ -79,7 +79,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             timestamp="00:12 - 00:25",
             source="incident-review.mp4",
             frame_path=None,
-            entities=["exponential backoff", "jitter", "circuit breaker"],
+            entities=["exponential backoff", "jitter", "circuit breaker", "checkout service", "payments API"],
             provenance={"kind": "video_frame_summary"},
         ),
         # --- PDF: the written postmortem with the exact numeric policy ---
@@ -105,7 +105,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             timestamp="Page 3",
             source="checkout-timeout-postmortem.pdf",
             frame_path=None,
-            entities=["exponential backoff", "circuit breaker", "checkout-service"],
+            entities=["exponential backoff", "circuit breaker", "checkout-service", "payments API", "jitter"],
             provenance={"kind": "pdf_page"},
         ),
         # --- Image: the dashboard screenshot proving it worked, with OCR ---
@@ -136,7 +136,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
                     {"label": "Retry path", "description": "Checkout -> Retry+Jitter -> Payments API", "box": {"x": 0.031, "y": 0.436, "width": 0.894, "height": 0.13}},
                 ],
             },
-            entities=["Grafana", "p99 latency", "checkout-service"],
+            entities=["Grafana", "p99 latency", "checkout-service", "payments API", "jitter"],
             provenance={"kind": "standalone_image"},
         ),
         # --- Distractor from an unrelated source, so retrieval must actually
@@ -169,7 +169,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             modality=MediaModality.JSON,
             timestamp="ticket-4471",
             source="support-tickets.json",
-            entities=["checkout", "timeout"],
+            entities=["checkout service", "timeout", "circuit breaker"],
             provenance={"kind": "json_record"},
         ),
         KnowledgeNode(
@@ -184,7 +184,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             modality=MediaModality.JSON,
             timestamp="ticket-4502",
             source="support-tickets.json",
-            entities=["checkout", "resolved"],
+            entities=["checkout service", "resolved"],
             provenance={"kind": "json_record"},
         ),
         # ==============================================================
@@ -220,7 +220,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             timestamp="00:11 - 00:26",
             source="onboarding-walkthrough.mp4",
             frame_path=None,
-            entities=["permission screens", "deferred contacts access"],
+            entities=["permission screens", "deferred contacts access", "onboarding", "permissions"],
             provenance={"kind": "video_frame_summary"},
         ),
         KnowledgeNode(
@@ -245,7 +245,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             timestamp="Page 3",
             source="onboarding-design-spec.pdf",
             frame_path=None,
-            entities=["completion rate", "A/B test"],
+            entities=["completion rate", "A/B test", "permissions", "contacts permission"],
             provenance={"kind": "pdf_page"},
         ),
         KnowledgeNode(
@@ -286,7 +286,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
                     {"label": "After", "description": "Split screens with deferred contacts access", "box": {"x": 0.521, "y": 0.26, "width": 0.4375, "height": 0.26}},
                 ],
             },
-            entities=["A/B test", "completion rate"],
+            entities=["A/B test", "completion rate", "contacts permission", "permissions"],
             provenance={"kind": "standalone_image"},
         ),
         KnowledgeNode(
@@ -312,6 +312,20 @@ def build_demo_nodes() -> list[KnowledgeNode]:
 
 
 SAMPLES = Path(__file__).resolve().parent / "samples"
+
+# When each sample "happened", so entity timelines read like a real project:
+# the incident (March) and the onboarding redesign (March-April).
+DEMO_RECORDED_AT = {
+    "support-tickets.json": "2026-03-09T10:00:00+00:00",
+    "incident-review.mp4": "2026-03-11T15:00:00+00:00",
+    "checkout-timeout-postmortem.pdf": "2026-03-12T09:30:00+00:00",
+    "grafana-after-fix.png": "2026-03-14T18:20:00+00:00",
+    "all-hands-q3.mp4": "2026-03-20T16:00:00+00:00",
+    "onboarding-design-spec.pdf": "2026-03-28T11:00:00+00:00",
+    "onboarding-walkthrough.mp4": "2026-04-02T14:00:00+00:00",
+    "onboarding-ab-results.png": "2026-04-20T09:00:00+00:00",
+    "user-feedback-survey.json": "2026-04-25T12:00:00+00:00",
+}
 
 # The slide images baked into each sample video, in order of appearance.
 VIDEO_FRAMES = {
@@ -403,7 +417,7 @@ def seed_demo(
         result = ingest_nodes(
             asset,
             nodes,
-            source_attributes={"demo_seed": True},
+            source_attributes={"demo_seed": True, "recorded_at": DEMO_RECORDED_AT.get(filename)},
             repository=repo,
             vector_store=vector_store,
         )

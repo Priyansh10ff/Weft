@@ -565,10 +565,15 @@ class KnowledgeRepository:
         return [self._row_to_segment(r) for r in rows]
 
     def _prune_orphan_entities(self) -> None:
-        self._execute(
-            "DELETE FROM entities WHERE id NOT IN (SELECT dst_id FROM relations) "
-            "AND id NOT IN (SELECT src_id FROM relations)"
+        """Drop entities no segment mentions or is spoken by, and their same_as edges."""
+        used = (
+            "SELECT dst_id FROM relations WHERE relation IN ('mentions', 'spoken_by')"
         )
+        self._execute(
+            f"DELETE FROM relations WHERE relation = 'same_as' "
+            f"AND (src_id NOT IN ({used}) OR dst_id NOT IN ({used}))"
+        )
+        self._execute(f"DELETE FROM entities WHERE id NOT IN ({used})")
 
     # -------------------------------------------------------------- relations
 

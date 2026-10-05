@@ -10,8 +10,9 @@ records of ``app.schemas.records``:
 3. upsert mentioned entities (typed) and add ``MENTIONS`` edges, and add
    ``SPOKEN_BY`` edges to the speakers of speech segments,
 4. add ``NEXT`` edges between consecutive segments of time/page-ordered sources,
-5. commit all of the above atomically to SQLite, then
-6. embed the segments into the vector index.
+5. commit all of the above atomically to SQLite,
+6. embed the segments into the vector index, then
+7. link them to the rest of the graph (``app.services.linker``).
 
 If step 6 fails the records stay in SQLite with status ``index_failed`` and
 ``rebuild_index`` can re-embed them later; SQLite is the source of truth.
@@ -75,6 +76,7 @@ class IngestResult:
     segments: list[SegmentRecord] = field(default_factory=list)
     entity_count: int = 0
     relation_count: int = 0
+    link_count: int = 0
 
 
 # --------------------------------------------------------------------------
@@ -404,11 +406,23 @@ def ingest_nodes(
         _log.exception("Indexing failed for source %s (%s)", source.id, source.filename)
         raise
 
+    # 7. Link the new segments to the rest of the graph. Best effort: the
+    #    source is already stored and searchable if this fails, and
+    #    ``python -m app.cli relink`` can recompute links later.
+    link_count = 0
+    try:
+        from app.services.linker import link_source
+
+        link_count = link_source(source.id, repository=repo, vector_store=store).total
+    except Exception:
+        _log.exception("Cross-modal linking failed for source %s", source.id)
+
     return IngestResult(
         source=source,
         segments=segments,
         entity_count=len(entity_ids),
-        relation_count=len(relations),
+        relation_count=len(relations) + link_count,
+        link_count=link_count,
     )
 
 
