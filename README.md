@@ -1,12 +1,14 @@
-# Gradient-Rush: Multimodal Data Management Pipeline for RAG-Ready Systems
+# Weft
 
-Gradient-Rush turns videos, images, and PDFs into retrieval-ready knowledge that keeps the evidence users actually need: what was said, what was shown, and where it appeared.
+**Multimodal data management pipeline for RAG-ready systems.** Weft weaves video, audio, images, PDFs and JSON into one linked, timestamped knowledge graph, so every answer traces back to the exact frame, page or second it came from.
+
+Weft turns videos, images, and PDFs into retrieval-ready knowledge that keeps the evidence users actually need: what was said, what was shown, and where it appeared.
 
 ## Overview & Problem Statement
 
 Most RAG pipelines reduce source material to plain text. That loses the architecture diagram on a slide, the OCR text in a screenshot, the page location in a PDF, and the time window in which a speaker explained it.
 
-Gradient-Rush bridges these gaps by combining speech transcription, sampled video frames, image/PDF OCR-style visual analysis, and document context into a single searchable knowledge layer. Every indexed item carries its source, modality, time range or page locator, extracted frame path, transcript, and visual summary—so retrieval can return grounded multimodal evidence instead of disconnected text fragments.
+Weft bridges these gaps by combining speech transcription, sampled video frames, image/PDF OCR-style visual analysis, and document context into a single searchable knowledge layer. Every indexed item carries its source, modality, time range or page locator, extracted frame path, transcript, and visual summary—so retrieval can return grounded multimodal evidence instead of disconnected text fragments.
 
 ## Key Architectural Features
 

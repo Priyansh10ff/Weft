@@ -108,7 +108,7 @@ def _run_query(store, repo, query: str, required_modalities: set[str], expected_
 
 
 def run() -> bool:
-    tmp_dir = Path(tempfile.mkdtemp(prefix="gradient_rush_test_"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="weft_test_"))
     ok = True
     try:
         store = VectorStore(persistence_path=tmp_dir / "chroma", collection_name="test_segments")

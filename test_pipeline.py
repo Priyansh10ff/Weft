@@ -1,4 +1,4 @@
-"""Non-destructive presentation-readiness checks for the Gradient-Rush stack."""
+"""Non-destructive presentation-readiness checks for the Weft stack."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def check_vector_store() -> str:
     from app.services.ingestion import ingest_nodes
     from app.services.vector_store import VectorStore
 
-    temporary_directory = Path(tempfile.mkdtemp(prefix="gradient-rush-store-"))
+    temporary_directory = Path(tempfile.mkdtemp(prefix="weft-store-"))
     repo = None
     store = None
     try:
@@ -143,7 +143,7 @@ def check_media_processors() -> str:
         else:
             raise CheckFailure(f"{processor.__name__} did not reject a missing file")
 
-    with tempfile.TemporaryDirectory(prefix="gradient-rush-media-") as temporary_directory:
+    with tempfile.TemporaryDirectory(prefix="weft-media-") as temporary_directory:
         empty_path = Path(temporary_directory) / "empty.bin"
         empty_path.write_bytes(b"")
         empty_checks = (
@@ -257,7 +257,7 @@ def check_frontend_contract() -> str:
 
 
 def print_report(audit: Audit) -> None:
-    print("\nGradient-Rush pipeline self-test")
+    print("\nWeft pipeline self-test")
     print("=" * 86)
     print(f"{'Component':<38} {'Status':<8} Details")
     print("-" * 86)

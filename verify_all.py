@@ -1,5 +1,5 @@
 """
-verify_all.py — Gradient-Rush systemic verification script.
+verify_all.py — Weft systemic verification script.
 
 Uploads mock payloads to every ingestion endpoint and validates the
 /query/compare response structure.  Cleans up all temporary test files
@@ -210,7 +210,7 @@ def check_pdf_upload() -> bool:
 
 def main() -> int:
     print("=" * 60)
-    print("  Gradient-Rush — Systemic Verification")
+    print("  Weft — Systemic Verification")
     print("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmp:

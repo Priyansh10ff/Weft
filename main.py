@@ -31,7 +31,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Multimodal Data Management Pipeline",
+    title="Weft",
     version="0.2.0",
     description="Turns video, audio, images, PDFs and JSON into structured, linked, retrievable knowledge.",
     lifespan=lifespan,

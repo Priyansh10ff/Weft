@@ -1,4 +1,4 @@
-"""Streamlit frontend for the Gradient-Rush multimodal RAG API."""
+"""Streamlit frontend for the Weft multimodal RAG API."""
 
 from pathlib import Path
 from typing import Any
@@ -29,12 +29,12 @@ UPLOAD_ENDPOINTS: dict[str, str] = {
 
 
 st.set_page_config(
-    page_title="Gradient-Rush: Multimodal RAG Pipeline",
+    page_title="Weft: Multimodal RAG Pipeline",
     page_icon="🧠",
     layout="wide",
 )
 
-st.title("Gradient-Rush: Multimodal RAG Pipeline")
+st.title("Weft: Multimodal RAG Pipeline")
 st.caption("Search across transcripts, visual evidence, and document context.")
 
 
