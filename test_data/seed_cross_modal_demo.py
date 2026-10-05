@@ -1,9 +1,9 @@
 """Seed a deliberately cross-modal knowledge base for demoing /query.
 
-This does NOT call Whisper/Gemini and needs no API keys -- it writes
-`KnowledgeNode` records straight into the same persistent ChromaDB store the
-API uses, so `uvicorn main:app` (or `test_pipeline.py`) can query them
-immediately.
+This does NOT call Whisper/Gemini and needs no API keys -- it feeds
+`KnowledgeNode` records through the same ingestion path the upload API uses
+(SQLite records + Chroma index), so `uvicorn main:app` (or
+`test_pipeline.py`) can query them immediately.
 
 The scenario is designed so that no single modality alone answers the demo
 question -- the evidence is deliberately split:
@@ -26,9 +26,9 @@ genuine cross-modal retrieval, not just OCR-to-text-to-vector-search.
 
 This scenario mirrors the real sample files bundled under
 ``test_data/samples/`` (which you can upload through the actual API — see
-``test_data/upload_samples.py``); this script instead writes equivalent
-knowledge directly into Chroma so the demo works instantly, with no API
-keys and no running server.
+``test_data/upload_samples.py``); this script instead ingests equivalent
+pre-extracted knowledge so the demo works instantly, with no API keys and no
+running server.
 
 Run:
     python test_data/seed_cross_modal_demo.py
@@ -41,8 +41,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.schemas.knowledge import KnowledgeNode, MediaModality  # noqa: E402
-from app.services.vector_store import get_knowledge_vector_store  # noqa: E402
+from uuid import NAMESPACE_URL, uuid5  # noqa: E402
+
+from app.db.repository import KnowledgeRepository, get_repository  # noqa: E402
+from app.schemas.knowledge import KnowledgeNode, MediaModality, SourceAsset  # noqa: E402
+from app.services.ingestion import IngestResult, delete_source, ingest_nodes  # noqa: E402
+from app.services.vector_store import VectorStore  # noqa: E402
 
 
 def build_demo_nodes() -> list[KnowledgeNode]:
@@ -276,11 +280,46 @@ def build_demo_nodes() -> list[KnowledgeNode]:
     ]
 
 
+def seed_demo(
+    repository: KnowledgeRepository | None = None,
+    vector_store: VectorStore | None = None,
+) -> list[IngestResult]:
+    """Ingest the demo nodes as one source per (file, modality).
+
+    Source IDs are deterministic, so re-seeding replaces the previous demo
+    data instead of duplicating it.
+    """
+    groups: dict[tuple[str, MediaModality], list[KnowledgeNode]] = {}
+    for node in build_demo_nodes():
+        groups.setdefault((node.source or "unknown", MediaModality(node.modality)), []).append(node)
+
+    repo = repository or get_repository()
+    results = []
+    for (filename, modality), nodes in groups.items():
+        source_id = uuid5(NAMESPACE_URL, f"gradient-rush-demo/{modality.value}/{filename}")
+        if repo.get_source(str(source_id)) is not None:
+            delete_source(str(source_id), repository=repo, vector_store=vector_store)
+        asset = SourceAsset(source_id=source_id, filename=filename, modality=modality)
+        results.append(
+            ingest_nodes(
+                asset,
+                nodes,
+                source_attributes={"demo_seed": True},
+                repository=repo,
+                vector_store=vector_store,
+            )
+        )
+    return results
+
+
 def main() -> None:
-    store = get_knowledge_vector_store()
-    nodes = build_demo_nodes()
-    store.add_nodes(nodes)
-    print(f"Seeded {len(nodes)} cross-modal demo nodes into '{store.collection_name}'.")
+    results = seed_demo()
+    segments = sum(len(r.segments) for r in results)
+    relations = sum(r.relation_count for r in results)
+    print(
+        f"Seeded {len(results)} sources / {segments} segments / {relations} relations "
+        "into the knowledge store."
+    )
     print(
         "Try: curl -X POST http://127.0.0.1:8000/query -H 'Content-Type: application/json' "
         "-d '{\"query\": \"How did the team fix the checkout timeout issue and how do we "

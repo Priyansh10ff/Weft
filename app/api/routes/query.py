@@ -16,8 +16,9 @@ from app.schemas.knowledge import (
     KnowledgeQueryResult,
     SynthesizedAnswerModel,
 )
+from app.services import retrieval
 from app.services.answer_synthesizer import synthesize_answer
-from app.services.vector_store import VectorStoreError, get_knowledge_vector_store
+from app.services.vector_store import VectorStoreError
 
 _log = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def _sanitize_frame_path(raw: Any) -> str | None:
 
 
 def _to_query_result(hit: dict[str, Any]) -> KnowledgeQueryResult:
-    """Flatten Chroma metadata into the stable demo-facing response contract."""
+    """Flatten a hydrated hit into the stable demo-facing response contract."""
     metadata = hit.get("metadata") or {}
 
     # Transcript: prefer the dedicated field; fall back to content so the UI
@@ -121,15 +122,20 @@ def _to_query_result(hit: dict[str, Any]) -> KnowledgeQueryResult:
         modality=metadata.get("modality"),
         similarity_score=float(hit["similarity_score"]),
         distance=float(hit["distance"]),
+        segment_id=metadata.get("segment_id"),
+        source_id=metadata.get("source_id"),
+        kind=metadata.get("kind"),
+        confidence=metadata.get("confidence"),
+        entities=list(metadata.get("entities") or []),
     )
 
 
 @router.post("/query", response_model=KnowledgeQueryResponse)
 async def query_knowledge(request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-    """Search the persistent Chroma KnowledgeNode collection."""
+    """Search the segment index and synthesize a grounded answer from hydrated evidence."""
     try:
         hits = await to_thread.run_sync(
-            lambda: get_knowledge_vector_store().search(request.query, request.limit)
+            lambda: retrieval.search(request.query, request.limit)
         )
     except VectorStoreError as exc:
         raise HTTPException(
@@ -165,8 +171,8 @@ async def compare_query(request: KnowledgeQueryRequest) -> KnowledgeComparisonRe
     try:
         multimodal_hits, baseline_hits = await to_thread.run_sync(
             lambda: (
-                get_knowledge_vector_store().search(request.query, request.limit),
-                get_knowledge_vector_store().search_text_only(request.query, request.limit),
+                retrieval.search(request.query, request.limit),
+                retrieval.search(request.query, request.limit, text_only=True),
             )
         )
     except VectorStoreError as exc:

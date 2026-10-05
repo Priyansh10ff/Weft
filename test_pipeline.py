@@ -67,17 +67,22 @@ def check_environment() -> str:
 
 
 def check_vector_store() -> str:
-    from app.schemas.knowledge import KnowledgeNode, MediaModality, TemporalLocation
+    from app.db.repository import KnowledgeRepository
+    from app.schemas.knowledge import KnowledgeNode, MediaModality, SourceAsset, TemporalLocation
+    from app.services import retrieval
+    from app.services.ingestion import ingest_nodes
     from app.services.vector_store import VectorStore
 
-    temporary_directory = tempfile.mkdtemp(prefix="gradient-rush-chroma-")
+    temporary_directory = Path(tempfile.mkdtemp(prefix="gradient-rush-store-"))
+    repo = None
+    store = None
     try:
         store = VectorStore(
-            persistence_path=temporary_directory,
+            persistence_path=temporary_directory / "chroma",
             collection_name=f"audit_{uuid4().hex}",
         )
+        repo = KnowledgeRepository(temporary_directory / "knowledge.db")
         node = KnowledgeNode(
-            id=f"audit-{uuid4()}",
             content="The database architecture uses a distributed SQL cluster.",
             transcript="The database architecture uses a distributed SQL cluster.",
             visual_summary="A diagram shows three database nodes connected in a cluster.",
@@ -85,21 +90,36 @@ def check_vector_store() -> str:
             modality=MediaModality.VIDEO,
             source="audit.mp4",
             frame_path="/frames/audit.jpg",
+            entities=["SQL cluster"],
         )
-        store.add_nodes([node])
-        multimodal = store.search("database architecture", limit=1)
-        baseline = store.search_text_only("database architecture", limit=1)
+        asset = SourceAsset(filename="audit.mp4", modality=MediaModality.VIDEO)
+        ingest_nodes(asset, [node], repository=repo, vector_store=store)
+        multimodal = retrieval.search(
+            "database architecture", 1, vector_store=store, repository=repo
+        )
+        baseline = retrieval.search(
+            "database architecture", 1, text_only=True, vector_store=store, repository=repo
+        )
         if not multimodal or not baseline:
             raise CheckFailure("Chroma did not return both multimodal and baseline results")
-        if multimodal[0]["metadata"].get("visual_summary") is None:
-            raise CheckFailure("visual summary metadata was not retained")
+        segment = multimodal[0]["segment"]
+        if not segment.visual_summary:
+            raise CheckFailure("visual summary was not retained in SQLite")
+        if segment.locator.start_seconds != 12 or segment.locator.end_seconds != 20:
+            raise CheckFailure(f"locator was not preserved: {segment.locator}")
+        if multimodal[0]["metadata"]["entities"] != ["SQL cluster"]:
+            raise CheckFailure("entity mention was not linked to the segment")
         if baseline[0]["transcript"] != node.transcript:
             raise CheckFailure("text-only baseline transcript was not retained")
+        if baseline[0]["metadata"]["visual_summary"] is not None:
+            raise CheckFailure("text-only baseline leaked visual evidence")
     finally:
+        if repo is not None:
+            repo.close()
         del store
         gc.collect()
         shutil.rmtree(temporary_directory, ignore_errors=True)
-    return "local Chroma insert/search and text-only baseline: ok"
+    return "SQLite records + Chroma index, hydration, entities, text-only baseline: ok"
 
 
 def check_media_processors() -> str:

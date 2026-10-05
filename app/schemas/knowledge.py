@@ -118,6 +118,12 @@ class KnowledgeNode(BaseModel):
     entities: list[str] = Field(default_factory=list)
     provenance: dict[str, Any] = Field(default_factory=dict)
     attributes: dict[str, Any] = Field(default_factory=dict)
+    confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Extractor-reported confidence; ingestion applies a per-extractor prior when unset.",
+    )
 
 
 class UploadAccepted(BaseModel):
@@ -180,6 +186,9 @@ class VideoUploadResponse(BaseModel):
     success: bool
     processed_nodes: int = Field(ge=0)
     source: str
+    source_id: str | None = None
+    entity_count: int = Field(default=0, ge=0)
+    relation_count: int = Field(default=0, ge=0)
 
 
 class KnowledgeQueryRequest(BaseModel):
@@ -204,6 +213,11 @@ class KnowledgeQueryResult(BaseModel):
     modality: str | None = None
     similarity_score: float = Field(ge=0.0, le=1.0)
     distance: float = Field(ge=0.0)
+    segment_id: str | None = None
+    source_id: str | None = None
+    kind: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    entities: list[str] = Field(default_factory=list)
 
 
 class AnswerSource(BaseModel):
@@ -248,6 +262,9 @@ class KnowledgeUploadResponse(BaseModel):
     success: bool
     processed_nodes: int = Field(ge=0)
     source: str
+    source_id: str | None = None
+    entity_count: int = Field(default=0, ge=0)
+    relation_count: int = Field(default=0, ge=0)
 
 
 class KnowledgeComparisonResponse(BaseModel):

@@ -4,7 +4,8 @@ This is the check judges care about: not "does vector search return
 something", but "does the required evidence span multiple modalities, and
 does the system retrieve + connect all of it correctly".
 
-Uses an isolated temp ChromaDB directory (never touches ./chroma_db), so it
+Uses an isolated temp SQLite DB + ChromaDB directory (never touches ./data or
+./chroma_db), so it
 is safe to run repeatedly and in CI. Needs no API keys: if GEMINI_API_KEY is
 unset, the answer synthesizer falls back to a deterministic extractive
 answer, and this test still verifies cross-modal retrieval + evidence
@@ -23,9 +24,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.db.repository import KnowledgeRepository  # noqa: E402
+from app.services import retrieval  # noqa: E402
 from app.services.answer_synthesizer import synthesize_answer  # noqa: E402
 from app.services.vector_store import VectorStore  # noqa: E402
-from test_data.seed_cross_modal_demo import build_demo_nodes  # noqa: E402
+from test_data.seed_cross_modal_demo import seed_demo  # noqa: E402
 
 
 QUERY = "How did the team fix the checkout timeout issue and how do we know it worked?"
@@ -55,9 +58,9 @@ EXPECTED_SIGNAL_TERMS_2 = [
 ]
 
 
-def _run_query(store, query: str, required_modalities: set[str], expected_terms: list[str], label: str) -> bool:
+def _run_query(store, repo, query: str, required_modalities: set[str], expected_terms: list[str], label: str) -> bool:
     ok = True
-    hits = store.search(query, limit=5)
+    hits = retrieval.search(query, limit=5, vector_store=store, repository=repo)
     modalities_hit = {(h.get("metadata") or {}).get("modality") for h in hits}
     modalities_hit.discard(None)
 
@@ -108,16 +111,16 @@ def run() -> bool:
     tmp_dir = Path(tempfile.mkdtemp(prefix="gradient_rush_test_"))
     ok = True
     try:
-        store = VectorStore(persistence_path=tmp_dir, collection_name="test_multimodal_knowledge")
-        nodes = build_demo_nodes()
-        store.add_nodes(nodes)
+        store = VectorStore(persistence_path=tmp_dir / "chroma", collection_name="test_segments")
+        repo = KnowledgeRepository(tmp_dir / "knowledge.db")
+        seed_demo(repository=repo, vector_store=store)
 
-        ok = _run_query(store, QUERY, REQUIRED_MODALITIES, EXPECTED_SIGNAL_TERMS, "Scenario 1: checkout timeout") and ok
-        ok = _run_query(store, QUERY_2, REQUIRED_MODALITIES, EXPECTED_SIGNAL_TERMS_2, "Scenario 2: onboarding redesign") and ok
+        ok = _run_query(store, repo, QUERY, REQUIRED_MODALITIES, EXPECTED_SIGNAL_TERMS, "Scenario 1: checkout timeout") and ok
+        ok = _run_query(store, repo, QUERY_2, REQUIRED_MODALITIES, EXPECTED_SIGNAL_TERMS_2, "Scenario 2: onboarding redesign") and ok
 
         # Distractor (unrelated all-hands clip) must NOT crowd out real evidence
         # in either scenario's retrieval.
-        hits_1 = store.search(QUERY, limit=5)
+        hits_1 = retrieval.search(QUERY, limit=5, vector_store=store, repository=repo)
         sources_hit = {(h.get("metadata") or {}).get("source") for h in hits_1}
         if "all-hands-q3.mp4" in sources_hit:
             print("\nFAIL: unrelated distractor source was retrieved as relevant evidence.")
@@ -126,6 +129,8 @@ def run() -> bool:
             print("\nPASS: distractor source correctly excluded.")
 
     finally:
+        if "repo" in locals():
+            repo.close()
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     print("\n=== CROSS-MODAL QUERY TEST:", "PASS ===" if ok else "FAIL ===")

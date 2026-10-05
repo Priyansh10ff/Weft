@@ -1,18 +1,28 @@
-"""Persistent local Chroma retrieval over provenance-preserving knowledge records."""
+"""Chroma vector index over ``SegmentRecord`` IDs.
 
-import json
+This is an *index*, not a store: each Chroma entry is keyed by a segment ID
+and carries only the metadata needed for filtering and de-duplication.  The
+evidence itself (text, visual summary, locator, entities, relations) lives
+in SQLite and is hydrated by ``app.services.retrieval``.  The whole index can
+therefore be dropped and rebuilt from the database (``python -m app.cli
+reindex``).
+
+Two collections are maintained:
+
+* ``segments``           -- embeds locator context + text + visual summary.
+* ``segments_text_only`` -- embeds text only; the text-centric RAG baseline.
+"""
+
+from __future__ import annotations
+
+import os
 import threading
-import asyncio
-from enum import Enum
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
-from app.schemas.knowledge import (
-    KnowledgeNode,
-    ExtractedKnowledgeBase,
-)
-from app.services.storage import storage_root
+from app.schemas.records import SegmentRecord, SourceRecord
 
 
 class VectorStoreError(RuntimeError):
@@ -23,18 +33,70 @@ class VectorStoreDependencyError(VectorStoreError):
     """Raised when Chroma's local embedding dependencies are unavailable."""
 
 
-class VectorStore:
-    """Persistent ChromaDB storage for :class:`KnowledgeNode` instances.
+DEFAULT_COLLECTION = "segments"
 
-    Chroma's default embedding function creates embeddings from the assembled
-    document.  Node metadata is normalized to Chroma's scalar-only metadata
-    format, with nested values JSON encoded so source provenance is retained.
+
+def default_index_path() -> Path:
+    configured = os.getenv("CHROMA_PATH")
+    return Path(configured) if configured else Path.cwd() / "chroma_db"
+
+
+@dataclass
+class VectorHit:
+    """A raw nearest-neighbour match; hydrate it before showing it to anyone."""
+
+    segment_id: str
+    distance: float
+    similarity_score: float
+    document: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def document_for_segment(segment: SegmentRecord, source: SourceRecord | None) -> str:
+    """Multimodal embedding document: locator context, text, and visual evidence.
+
+    The ``[modality | source | locator]`` prefix anchors very short segments
+    (a 3-word speech span, a one-line OCR result) in embedding space so they
+    do not score similarly against every query.
     """
+    prefix_parts = [
+        segment.modality.value,
+        source.filename if source else None,
+        segment.locator.display(),
+    ]
+    prefix = "[" + " | ".join(p for p in prefix_parts if p) + "]"
+    body = [prefix, (segment.text or "").strip(), (segment.visual_summary or "").strip()]
+    return "\n".join(p for p in body if p) or "Multimodal knowledge item"
+
+
+def _metadata_for_segment(
+    segment: SegmentRecord, source: SourceRecord | None
+) -> dict[str, str | int | float | bool]:
+    return {
+        "segment_id": segment.id,
+        "source_id": segment.source_id,
+        "source": source.filename if source else "",
+        "modality": segment.modality.value,
+        "kind": segment.kind.value,
+        "confidence": float(segment.confidence),
+        "has_visual": segment.has_visual(),
+    }
+
+
+class VectorStore:
+    """Persistent ChromaDB index keyed by segment ID."""
+
+    # Results at or below this cosine similarity are indistinguishable from
+    # noise for MiniLM-L6 embeddings and are suppressed.
+    _MIN_SCORE = 0.30
+    # Stop many short segments from one file flooding the top-k list.
+    _MAX_PER_SOURCE = 2
 
     def __init__(
         self,
-        persistence_path: str | Path = "./chroma_db",
-        collection_name: str = "multimodal_knowledge",
+        persistence_path: str | Path | None = None,
+        collection_name: str = DEFAULT_COLLECTION,
+        embedding_function: Any | None = None,
     ) -> None:
         try:
             import chromadb
@@ -44,134 +106,84 @@ class VectorStore:
                 "chromadb must be installed to use VectorStore."
             ) from exc
 
-        self.persistence_path = Path(persistence_path)
+        self.persistence_path = Path(persistence_path) if persistence_path else default_index_path()
         self.collection_name = collection_name
         self.text_only_collection_name = f"{collection_name}_text_only"
         try:
             self.persistence_path.mkdir(parents=True, exist_ok=True)
             self.client = chromadb.PersistentClient(path=str(self.persistence_path))
-            self.embedding_function = DefaultEmbeddingFunction()
-            self.collection = self.client.get_or_create_collection(
-                name=self.collection_name,
-                metadata={"hnsw:space": "cosine"},
-                embedding_function=self.embedding_function,
-            )
-            self.text_only_collection = self.client.get_or_create_collection(
-                name=self.text_only_collection_name,
-                metadata={"hnsw:space": "cosine"},
-                embedding_function=self.embedding_function,
-            )
+            self.embedding_function = embedding_function or DefaultEmbeddingFunction()
+            self._open_collections()
         except Exception as exc:
-            raise VectorStoreError("Unable to initialize the ChromaDB collection.") from exc
+            raise VectorStoreError("Unable to initialize the ChromaDB collections.") from exc
 
-    @staticmethod
-    def _json_value(value: Any) -> str:
-        """Serialize nested Pydantic/UUID values consistently for metadata."""
-        if hasattr(value, "model_dump"):
-            value = value.model_dump(mode="json", exclude_none=True)
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
-
-    @classmethod
-    def _metadata_for_node(cls, node: KnowledgeNode) -> dict[str, str | int | float | bool]:
-        """Convert all supplied node attributes to Chroma-compatible metadata."""
-        raw = node.model_dump(mode="python", exclude_none=True)
-        metadata: dict[str, str | int | float | bool] = {}
-        for key, value in raw.items():
-            if key == "id" or value is None:
-                continue
-            if isinstance(value, Enum):
-                metadata[key] = str(value.value)
-            elif isinstance(value, (str, int, float, bool)):
-                metadata[key] = value
-            else:
-                metadata[key] = cls._json_value(value)
-        # Include the assembled text fields in metadata so callers can display
-        # transcripts and visual summaries without parsing the document.
-        return metadata
-
-    @staticmethod
-    def _content_text(value: str | dict[str, Any] | None) -> str:
-        if value is None:
-            return ""
-        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-
-    @classmethod
-    def _document_for_node(cls, node: KnowledgeNode) -> str:
-        """Build the embedding document from text and optional visual context.
-
-        Short segments (e.g. 2–8 word audio lyrics) produce noisy embeddings
-        that score similarly against every query.  We enrich them by prepending
-        a source-context prefix so the embedding has enough signal to
-        discriminate between topics:
-
-            [audio | Edd_Sheeran.mp3 | 03:32 - 03:34]
-            Come on be my baby
-
-        This pattern dramatically improves retrieval precision for short clips
-        while not hurting longer PDF/image documents where the body text is
-        already sufficient.
-        """
-        transcript = (node.transcript or "").strip()
-        content = cls._content_text(node.content).strip()
-        visual = (node.visual_summary or "").strip()
-
-        # Build a context prefix that anchors short segments in embedding space.
-        modality_str = (
-            node.modality.value
-            if hasattr(node.modality, "value")
-            else str(node.modality)
+    def _open_collections(self) -> None:
+        self.collection = self.client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"hnsw:space": "cosine"},
+            embedding_function=self.embedding_function,
         )
-        source_str = (node.source or "").strip()
-        timestamp_str = str(node.timestamp or "").strip()
-        prefix_parts = [p for p in [modality_str, source_str, timestamp_str] if p]
-        prefix = "[" + " | ".join(prefix_parts) + "]" if prefix_parts else ""
+        self.text_only_collection = self.client.get_or_create_collection(
+            name=self.text_only_collection_name,
+            metadata={"hnsw:space": "cosine"},
+            embedding_function=self.embedding_function,
+        )
 
-        # Primary text: prefer transcript (speech/OCR), fall back to content.
-        primary_text = transcript or content
+    # ---------------------------------------------------------------- writes
 
-        body_parts = [p for p in [prefix, primary_text, visual] if p]
-        document = "\n".join(body_parts)
-        return document or "Multimodal knowledge item"
-
-    def add_nodes(self, nodes: list[KnowledgeNode]) -> None:
-        """Upsert nodes, embedding their text while preserving all metadata.
-
-        ``upsert`` makes repeated ingestion of a caller-provided ``node.id``
-        idempotent; absent IDs are generated with UUID4.
-        """
-        if not nodes:
+    def index_segments(
+        self, segments: list[SegmentRecord], sources: Mapping[str, SourceRecord]
+    ) -> None:
+        """Upsert embeddings for ``segments`` (idempotent by segment ID)."""
+        if not segments:
             return
         try:
-            ids = [str(node.id) if node.id is not None else str(uuid4()) for node in nodes]
-            documents = [self._document_for_node(node) for node in nodes]
-            metadatas = [self._metadata_for_node(node) for node in nodes]
+            ids = [s.id for s in segments]
+            metadatas = [_metadata_for_segment(s, sources.get(s.source_id)) for s in segments]
             self.collection.upsert(
                 ids=ids,
-                documents=documents,
+                documents=[document_for_segment(s, sources.get(s.source_id)) for s in segments],
                 metadatas=metadatas,
             )
-            transcript_entries = [
-                (node_id, node.transcript.strip(), metadata)
-                for node_id, node, metadata in zip(ids, nodes, metadatas, strict=True)
-                if node.transcript and node.transcript.strip()
+            text_entries = [
+                (s.id, s.text.strip(), m)
+                for s, m in zip(segments, metadatas, strict=True)
+                if s.text and s.text.strip()
             ]
-            if transcript_entries:
+            if text_entries:
                 self.text_only_collection.upsert(
-                    ids=[entry[0] for entry in transcript_entries],
-                    documents=[entry[1] for entry in transcript_entries],
-                    metadatas=[entry[2] for entry in transcript_entries],
+                    ids=[e[0] for e in text_entries],
+                    documents=[e[1] for e in text_entries],
+                    metadatas=[e[2] for e in text_entries],
                 )
         except Exception as exc:
-            raise VectorStoreError("Unable to add nodes to the ChromaDB collection.") from exc
+            raise VectorStoreError("Unable to index segments in ChromaDB.") from exc
 
-    # Minimum cosine-similarity score a result must exceed to be returned.
-    # Results at or below this threshold are statistically indistinguishable
-    # from random noise for MiniLM-L6 embeddings and should be suppressed.
-    _MIN_SCORE = 0.30
+    def delete_segments(self, segment_ids: list[str]) -> None:
+        if not segment_ids:
+            return
+        try:
+            self.collection.delete(ids=segment_ids)
+            self.text_only_collection.delete(ids=segment_ids)
+        except Exception as exc:
+            raise VectorStoreError("Unable to delete segments from ChromaDB.") from exc
 
-    # Maximum number of results allowed from a single source file.  Prevents
-    # many short segments from one audio/video file flooding the top-k list.
-    _MAX_PER_SOURCE = 2
+    def reset(self) -> None:
+        """Drop and recreate both collections (used by ``rebuild_index``)."""
+        try:
+            for name in (self.collection_name, self.text_only_collection_name):
+                try:
+                    self.client.delete_collection(name)
+                except Exception:
+                    pass  # Collection did not exist yet.
+            self._open_collections()
+        except Exception as exc:
+            raise VectorStoreError("Unable to reset the ChromaDB collections.") from exc
+
+    def count(self) -> int:
+        return int(self.collection.count())
+
+    # ----------------------------------------------------------------- reads
 
     def search(
         self,
@@ -179,79 +191,9 @@ class VectorStore:
         limit: int = 5,
         min_score: float | None = None,
         max_per_source: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """Return nearest knowledge nodes with provenance and similarity scores.
-
-        Results below ``min_score`` are filtered out so the caller never
-        receives irrelevant noise hits.  Source-level deduplication
-        (``max_per_source``) prevents one audio file's many short segments
-        from dominating the entire result list.
-        """
-        normalized_query = query.strip()
-        if not normalized_query:
-            raise ValueError("query must not be blank")
-        if limit < 1:
-            raise ValueError("limit must be at least 1")
-
-        effective_min_score = self._MIN_SCORE if min_score is None else min_score
-        effective_max_per_source = (
-            self._MAX_PER_SOURCE if max_per_source is None else max_per_source
-        )
-
-        try:
-            available = self.collection.count()
-            if available == 0:
-                return []
-            # Fetch more candidates than requested so deduplication and
-            # threshold filtering still leave at least ``limit`` survivors.
-            fetch_n = min(limit * 4, available)
-            results = self.collection.query(
-                query_texts=[normalized_query],
-                n_results=fetch_n,
-                include=["documents", "metadatas", "distances"],
-            )
-        except Exception as exc:
-            raise VectorStoreError("Unable to search the ChromaDB collection.") from exc
-
-        hits: list[dict[str, Any]] = []
-        source_counts: dict[str, int] = {}
-        for node_id, document, metadata, distance in zip(
-            results.get("ids", [[]])[0],
-            results.get("documents", [[]])[0],
-            results.get("metadatas", [[]])[0],
-            results.get("distances", [[]])[0],
-        ):
-            node_metadata = metadata or {}
-            numeric_distance = float(distance)
-            score = max(0.0, 1.0 - numeric_distance)
-
-            # --- Relevance threshold ---
-            if score < effective_min_score:
-                continue
-
-            # --- Source-level deduplication ---
-            source_key = str(node_metadata.get("source") or "unknown")
-            if source_counts.get(source_key, 0) >= effective_max_per_source:
-                continue
-            source_counts[source_key] = source_counts.get(source_key, 0) + 1
-
-            hits.append(
-                {
-                    "id": str(node_id),
-                    "document": document,
-                    "metadata": node_metadata,
-                    "timestamp": node_metadata.get("timestamp"),
-                    "frame_path": node_metadata.get("frame_path"),
-                    "transcript": node_metadata.get("transcript"),
-                    "source": node_metadata.get("source"),
-                    "distance": numeric_distance,
-                    "similarity_score": score,
-                }
-            )
-            if len(hits) >= limit:
-                break
-
-        return hits
+    ) -> list[VectorHit]:
+        """Nearest segments in the multimodal (text + visual) index."""
+        return self._search(self.collection, query, limit, min_score, max_per_source)
 
     def search_text_only(
         self,
@@ -259,72 +201,66 @@ class VectorStore:
         limit: int = 5,
         min_score: float | None = None,
         max_per_source: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """Search only embeddings made from raw transcripts, never visual summaries.
+    ) -> list[VectorHit]:
+        """Nearest segments when only extracted text was embedded (baseline)."""
+        return self._search(self.text_only_collection, query, limit, min_score, max_per_source)
 
-        Applies the same relevance threshold and source-level deduplication
-        as ``search()`` so the baseline result is also meaningful.
-        """
+    def _search(
+        self,
+        collection: Any,
+        query: str,
+        limit: int,
+        min_score: float | None,
+        max_per_source: int | None,
+    ) -> list[VectorHit]:
         normalized_query = query.strip()
         if not normalized_query:
             raise ValueError("query must not be blank")
         if limit < 1:
             raise ValueError("limit must be at least 1")
-
-        effective_min_score = self._MIN_SCORE if min_score is None else min_score
-        effective_max_per_source = (
-            self._MAX_PER_SOURCE if max_per_source is None else max_per_source
-        )
+        threshold = self._MIN_SCORE if min_score is None else min_score
+        per_source = self._MAX_PER_SOURCE if max_per_source is None else max_per_source
 
         try:
-            available = self.text_only_collection.count()
+            available = collection.count()
             if available == 0:
                 return []
-            fetch_n = min(limit * 4, available)
-            results = self.text_only_collection.query(
+            results = collection.query(
                 query_texts=[normalized_query],
-                n_results=fetch_n,
+                n_results=min(limit * 4, available),
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as exc:
-            raise VectorStoreError("Unable to perform text-only ChromaDB search.") from exc
+            raise VectorStoreError("Unable to search the ChromaDB index.") from exc
 
-        hits: list[dict[str, Any]] = []
-        source_counts: dict[str, int] = {}
-        for node_id, transcript, metadata, distance in zip(
+        hits: list[VectorHit] = []
+        per_source_counts: dict[str, int] = {}
+        for segment_id, document, metadata, distance in zip(
             results.get("ids", [[]])[0],
             results.get("documents", [[]])[0],
             results.get("metadatas", [[]])[0],
             results.get("distances", [[]])[0],
         ):
-            node_metadata = metadata or {}
+            metadata = dict(metadata or {})
             numeric_distance = float(distance)
             score = max(0.0, 1.0 - numeric_distance)
-
-            if score < effective_min_score:
+            if score < threshold:
                 continue
-
-            source_key = str(node_metadata.get("source") or "unknown")
-            if source_counts.get(source_key, 0) >= effective_max_per_source:
+            source_key = str(metadata.get("source_id") or metadata.get("source") or "unknown")
+            if per_source_counts.get(source_key, 0) >= per_source:
                 continue
-            source_counts[source_key] = source_counts.get(source_key, 0) + 1
-
+            per_source_counts[source_key] = per_source_counts.get(source_key, 0) + 1
             hits.append(
-                {
-                    "id": str(node_id),
-                    "document": transcript,
-                    "metadata": node_metadata,
-                    "timestamp": node_metadata.get("timestamp"),
-                    "frame_path": node_metadata.get("frame_path"),
-                    "transcript": transcript,
-                    "source": node_metadata.get("source"),
-                    "distance": numeric_distance,
-                    "similarity_score": score,
-                }
+                VectorHit(
+                    segment_id=str(segment_id),
+                    distance=numeric_distance,
+                    similarity_score=min(1.0, score),
+                    document=document or "",
+                    metadata=metadata,
+                )
             )
             if len(hits) >= limit:
                 break
-
         return hits
 
 
@@ -333,65 +269,16 @@ _knowledge_store_lock = threading.Lock()
 
 
 def get_knowledge_vector_store() -> VectorStore:
-    """Return the process-wide Chroma store used for ``KnowledgeNode`` objects."""
+    """Process-wide vector index (``CHROMA_PATH``, default ``./chroma_db``)."""
     global _knowledge_store_instance
     with _knowledge_store_lock:
         if _knowledge_store_instance is None:
             _knowledge_store_instance = VectorStore()
         return _knowledge_store_instance
 
-async def index_records(records: list[ExtractedKnowledgeBase]) -> int:
-    """Index legacy extracted records through the local KnowledgeNode store.
 
-    Converts ``TemporalLocation`` timestamps to clean human-readable strings
-    (e.g. ``"01:15 - 01:30"`` or ``"Page 3"``) so the UI never receives raw
-    JSON dict objects in the timestamp field.  Sets ``transcript`` from
-    ``content`` so every record lands in both the multimodal and text-only
-    collections.
-    """
-
-    def _fmt_seconds(seconds: float) -> str:
-        mins, secs = divmod(max(0, int(seconds)), 60)
-        return f"{mins:02d}:{secs:02d}"
-
-    def _format_timestamp(loc: object) -> str | None:
-        if loc is None:
-            return None
-        # TemporalLocation pydantic model
-        page = getattr(loc, "page_number", None)
-        if page is not None:
-            return f"Page {page}"
-        start = getattr(loc, "start_seconds", None)
-        end = getattr(loc, "end_seconds", None)
-        if start is not None and end is not None:
-            return f"{_fmt_seconds(float(start))} - {_fmt_seconds(float(end))}"
-        if start is not None:
-            return _fmt_seconds(float(start))
-        return None
-
-    nodes = []
-    for record in records:
-        content_text = str(record.content) if record.content is not None else ""
-        nodes.append(
-            KnowledgeNode(
-                content=content_text,
-                # transcript must be set so the text-only search index
-                # receives this segment's text (add_nodes only indexes
-                # to text_only_collection when transcript is non-empty).
-                transcript=content_text,
-                modality=record.modality,
-                timestamp=_format_timestamp(record.timestamp),
-                source=record.source,
-                provenance={
-                    "source_id": str(record.source_id),
-                    "parent_knowledge_id": (
-                        str(record.parent_knowledge_id)
-                        if record.parent_knowledge_id is not None
-                        else None
-                    ),
-                },
-            )
-        )
-    await asyncio.to_thread(get_knowledge_vector_store().add_nodes, nodes)
-    return len(nodes)
-
+def reset_knowledge_vector_store(store: VectorStore | None = None) -> None:
+    """Swap the process-wide vector index (tests, CLI tools)."""
+    global _knowledge_store_instance
+    with _knowledge_store_lock:
+        _knowledge_store_instance = store

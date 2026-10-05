@@ -46,6 +46,31 @@ flowchart LR
     B --> M[Multimodal RAG vs Text-Only RAG]
 ```
 
+## Knowledge Model
+
+SQLite (`data/knowledge.db`) is the system of record; ChromaDB is only an
+index over segment IDs and can be rebuilt from SQLite at any time.
+
+| Table | What it holds |
+| --- | --- |
+| `sources` | One row per uploaded asset: filename, modality, SHA-256, size, storage key, index status. |
+| `segments` | One row per unit of evidence (video window, speech span, PDF page, image, JSON record): text, visual summary, locator (start/end seconds, page, image region, label), frame path, confidence, extractor. |
+| `entities` | Named concepts, deduplicated across files by a normalized name (`checkout-service` = `Checkout Service`). |
+| `relations` | Typed, directed, confidence-weighted edges: `mentions` (segment→entity) and `next` (segment→following segment) today; `co_occurs`, `depicts`, `corroborates`, `same_as`, `supersedes` are reserved for cross-modal linking. |
+
+Confidence is the extractor's own value when a processor reports one, otherwise
+a per-extractor prior (structured input 1.0, PDF text layer 0.9, Whisper 0.85,
+Whisper+vision 0.8, vision OCR 0.75), lowered when a vision call failed.
+
+Maintenance:
+
+```bash
+python -m app.cli stats           # counts per table / modality / relation
+python -m app.cli import-legacy   # copy data from the pre-SQLite Chroma collection
+python -m app.cli reindex         # rebuild the Chroma index from SQLite
+python -m pytest tests            # unit + API + Chroma integration tests
+```
+
 ## API Endpoints
 
 | Endpoint | Purpose |
@@ -57,6 +82,11 @@ flowchart LR
 | `POST /upload/json` | Upload a JSON file — a single object or an array of `{text/content, locator, source, entities}` records — and index one node per record. For structured data you already have (tickets, logs, metadata) that doesn't need OCR/ASR/vision. |
 | `POST /query` | Search the combined transcript/text + visual-summary multimodal index and get back a synthesized, cross-modal-grounded `answer` alongside the raw ranked results. |
 | `POST /query/compare` | Compare the top multimodal result with the top transcript-only baseline result. |
+| `GET /stats` | Counts of sources, segments, entities and relations by modality/type. |
+| `GET /sources`, `GET /sources/{id}` | List sources, or one source with all its segments. |
+| `DELETE /sources/{id}` | Remove a source, its segments, edges and vectors. |
+| `GET /segments/{id}` | One segment with its source, mentioned entities and every relation. |
+| `GET /entities?q=`, `GET /entities/{id}` | Entities with mention/source/modality counts, or every segment mentioning one. |
 | `GET /frames/{filename}` | Preview extracted video or PDF image artifacts during a demo. |
 | `GET /docs` | Explore the interactive FastAPI/OpenAPI documentation. |
 

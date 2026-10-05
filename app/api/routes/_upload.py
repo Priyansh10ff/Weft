@@ -1,16 +1,22 @@
 """Shared upload validation and acknowledgement helpers.
 
-This module intentionally does not persist files or run extraction.  It only
-creates a source-asset record that later pipeline stages can use as their
-stable parent reference.
+``acknowledge_upload`` validates an upload and mints the ``SourceAsset`` that
+every derived record links back to; ``ingest_upload`` hands processor output
+to the ingestion service.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
 
 from app.schemas.knowledge import MediaModality, SourceAsset, UploadAccepted
+
+if TYPE_CHECKING:
+    from app.services.ingestion import IngestResult
 
 
 _EXTENSIONS: dict[MediaModality, set[str]] = {
@@ -64,3 +70,27 @@ def acknowledge_upload(file: UploadFile, modality: MediaModality) -> UploadAccep
         content_type=file.content_type,
     )
     return UploadAccepted(upload_id=uuid4(), source_asset=source_asset)
+
+
+async def ingest_upload(
+    receipt: UploadAccepted, nodes: list, source_path: Path | None
+) -> IngestResult:
+    """Persist processor output for one upload and index it.
+
+    Maps an indexing failure to 503; the records are kept in SQLite with
+    status ``index_failed`` so ``python -m app.cli reindex`` can recover them.
+    """
+    from anyio import to_thread
+
+    from app.services.ingestion import ingest_nodes
+    from app.services.vector_store import VectorStoreError
+
+    try:
+        return await to_thread.run_sync(
+            lambda: ingest_nodes(receipt.source_asset, nodes, file_path=source_path)
+        )
+    except VectorStoreError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{exc} The extracted records were saved; run a reindex to retry.",
+        ) from exc

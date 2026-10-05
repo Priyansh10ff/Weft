@@ -90,6 +90,8 @@ data/**/*.pdf
 !test_data/**
 !test_data/samples/
 !test_data/samples/**
+# ...but never their bytecode caches.
+test_data/**/__pycache__/
 
 # ─────────────────────────────────────────────
 # ML model weights (large binary blobs)
