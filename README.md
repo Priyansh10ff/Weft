@@ -216,7 +216,11 @@ The API key is used for Whisper transcription and GPT-4o-mini Vision analysis. C
 uvicorn main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/docs` to upload media and run retrieval queries. Extracted frames are previewable under `http://127.0.0.1:8000/frames/`.
+Then open:
+
+- `http://127.0.0.1:8000/` for the landing page
+- `http://127.0.0.1:8000/app` for the workspace: **Ask** (grounded answers with citations, evidence drawer that opens video/audio at the cited second and outlines OCR regions on images and pages, optional side-by-side with text-only RAG), **Library** (drag-and-drop uploads as background jobs with live progress, source timelines, delete) and **Entities** (where each person, system or metric appears across files and modalities). With an empty library, **Load sample data** seeds the bundled demo scenario; disable it on public deployments with `ENABLE_DEMO=false`.
+- `http://127.0.0.1:8000/docs` for the interactive API reference Extracted frames are previewable under `http://127.0.0.1:8000/frames/`.
 
 ## Future Improvements
 

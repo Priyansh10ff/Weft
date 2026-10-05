@@ -1,118 +1,273 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>weft // multimodal rag pipeline</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/static/style.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Weft · Multimodal knowledge for RAG, traced to the source</title>
+  <meta name="description" content="Weft turns video, audio, images, PDFs and JSON into one linked, timestamped knowledge graph, so every answer traces back to the exact frame, page or second it came from." />
+  <meta name="theme-color" content="#0a0a09" />
+  <meta property="og:title" content="Weft · Every answer, traced to the frame it came from" />
+  <meta property="og:description" content="Multimodal ingestion and retrieval for RAG: speech, slides, screenshots and documents woven into one graph." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="/static/img/weft-mark.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/weft.css" />
+  <link rel="stylesheet" href="/static/css/landing.css" />
 </head>
 <body>
-
-<header class="topbar">
-  <div class="wordmark">
-    <span class="bracket">[</span>weft<span class="bracket">]</span>
-  </div>
-  <div class="topbar-meta">
-    <span class="topbar-label">multimodal rag pipeline</span>
-    <span class="status" id="status-indicator" data-state="pending">
-      <span class="status-dot"></span>
-      <span class="status-text">connecting</span>
-    </span>
-  </div>
-</header>
-
-<main class="layout">
-
-  <!-- ============ SIDEBAR: INGESTION ============ -->
-  <section class="panel sidebar" aria-labelledby="ingest-heading">
-    <h2 id="ingest-heading" class="panel-title">01 · ingest</h2>
-
-    <div class="dropzone" id="dropzone" tabindex="0" role="button"
-         aria-label="Upload a video, audio, image, or PDF source">
-      <input type="file" id="file-input" accept=".mp4,.mp3,.wav,.m4a,.aac,.flac,.ogg,.png,.jpg,.jpeg,.pdf,.json,.txt" hidden />
-      <div class="dropzone-inner">
-        <div class="dropzone-glyph">＋</div>
-        <div class="dropzone-copy">
-          <strong>drop a source</strong>
-          <span>mp4 · audio · png/jpg · pdf</span>
-        </div>
+  <header class="site-nav">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="Weft home"><img src="/static/img/weft-mark.svg" alt="" />weft</a>
+      <nav aria-label="Primary">
+        <a href="#how">How it works</a>
+        <a href="#modalities">Modalities</a>
+        <a href="#trace">Traceability</a>
+        <a href="#api">API</a>
+      </nav>
+      <div class="nav-actions">
+        <a class="btn btn-ghost" href="https://github.com/Priyansh10ff/Weft" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          GitHub
+        </a>
+        <a class="btn btn-primary" href="/app">Open workspace</a>
       </div>
     </div>
+  </header>
 
-    <div class="modality-legend">
-      <span class="tag tag-video">video</span>
-      <span class="tag tag-audio">audio</span>
-      <span class="tag tag-image">image</span>
-      <span class="tag tag-pdf">pdf</span>
-    </div>
-
-    <div class="log-header">
-      <span>pipeline log</span>
-      <button class="ghost-btn" id="clear-log">clear</button>
-    </div>
-    <div class="log-feed" id="log-feed" aria-live="polite">
-      <div class="log-line log-muted">
-        <span class="log-prefix">$</span> waiting for a source&hellip;
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ MAIN: QUERY + RESULTS ============ -->
-  <section class="panel main" aria-labelledby="query-heading">
-    <h2 id="query-heading" class="panel-title">02 · query</h2>
-
-    <form class="query-form" id="query-form">
-      <label class="query-prompt" for="query-input">query&gt;</label>
-      <input
-        type="text"
-        id="query-input"
-        class="query-input"
-        placeholder="what architecture was discussed for reducing database load?"
-        autocomplete="off"
-      />
-      <button type="submit" class="run-btn" id="run-btn">run</button>
-    </form>
-
-    <div class="empty-state" id="empty-state">
-      <pre>
-   no query executed yet.
-
-   upload at least one source on the left,
-   then ask a question that needs evidence
-   from more than one modality.
-      </pre>
-    </div>
-
-    <div class="results" id="results" hidden>
-
-      <!-- diff-style comparison, the signature element -->
-      <div class="diff-block" id="diff-block">
-        <div class="diff-hunk-header" id="diff-hunk-header">@@ awaiting query @@</div>
-        <div class="diff-cols">
-          <div class="diff-col diff-add">
-            <div class="diff-col-label">+ multimodal</div>
-            <div class="diff-col-body" id="diff-multimodal"></div>
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <div>
+          <p class="eyebrow">Multimodal knowledge for RAG</p>
+          <h1 style="margin-top:18px">Every answer,<br />traced to the frame<br /><em>it came from.</em></h1>
+          <p class="lede">Weft weaves meeting recordings, calls, slides, screenshots and documents into one linked, timestamped knowledge graph. Ask a question and get an answer built from what was said, what was shown and what was written, with a link to the exact second, page or region.</p>
+          <div class="ctas">
+            <a class="btn btn-primary btn-lg" href="/app">Open workspace</a>
+            <a class="btn btn-lg" href="#how">See how it works</a>
           </div>
-          <div class="diff-col diff-remove">
-            <div class="diff-col-label">&minus; text-only baseline</div>
-            <div class="diff-col-body" id="diff-baseline"></div>
+          <div class="meta">
+            <span><i class="dot" style="background:var(--m-video)"></i>Video</span>
+            <span><i class="dot" style="background:var(--m-audio)"></i>Audio</span>
+            <span><i class="dot" style="background:var(--m-image)"></i>Images</span>
+            <span><i class="dot" style="background:var(--m-pdf)"></i>PDFs</span>
+            <span><i class="dot" style="background:var(--m-json)"></i>JSON</span>
+          </div>
+        </div>
+        <div class="loom" data-loom></div>
+      </div>
+    </section>
+
+    <section class="block" id="problem">
+      <div class="wrap">
+        <div class="block-head">
+          <p class="eyebrow">The problem</p>
+          <h2>Text-only RAG reads the transcript and misses the rest.</h2>
+          <p>In a recorded design review, the speaker says “this is how we cut database load” while the diagram that explains it is on screen. Chunk the transcript and embed it, and the diagram, the numbers on the slide and the speaker are gone.</p>
+        </div>
+        <div class="contrast">
+          <div>
+            <h3><span class="tag">BEFORE</span>Transcript chunks</h3>
+            <ul>
+              <li>Fixed-size chunks that cut sentences and slides in half</li>
+              <li>Diagrams, charts and on-screen text never indexed</li>
+              <li>No idea who said what, or when</li>
+              <li>A PDF page and the video that discusses it stay unrelated</li>
+              <li>Answers you cannot check against the source</li>
+            </ul>
+          </div>
+          <div class="yes">
+            <h3><span class="tag" style="color:var(--ok);border-color:rgba(130,199,157,.35)">WEFT</span>Woven evidence</h3>
+            <ul>
+              <li>Segments follow scene changes and sentence boundaries</li>
+              <li>Every frame, page and image described, with OCR located by bounding box</li>
+              <li>Speech attributed to speakers, every segment timestamped</li>
+              <li>Shared entities link a spoken explanation to the slide and the doc</li>
+              <li>Each answer cites the exact second, page or region it used</li>
+            </ul>
           </div>
         </div>
       </div>
+    </section>
 
-      <!-- full ranked multimodal hit list -->
-      <div class="hits-header">
-        <span>03 · ranked evidence</span>
-        <span class="hits-count" id="hits-count"></span>
+    <section class="block" id="how">
+      <div class="wrap">
+        <div class="block-head">
+          <p class="eyebrow">How it works</p>
+          <h2>Ingest. Weave. Retrieve.</h2>
+          <p>Existing models do the perception. Weft does the data management: what each piece of evidence is, where it came from, and how it connects to everything else.</p>
+        </div>
+        <div class="steps">
+          <article class="card step">
+            <span class="n">01 / INGEST</span>
+            <h3>Extract with provenance</h3>
+            <p>Each modality goes through the right extractor, and every output keeps its source, location and confidence.</p>
+            <ul>
+              <li>Whisper speech with per-sentence timestamps</li>
+              <li>Scene detection and keyframes for video</li>
+              <li>Vision summaries, OCR blocks and regions</li>
+              <li>Exact PDF text layer, OCR for scans</li>
+            </ul>
+          </article>
+          <article class="card step">
+            <span class="n">02 / WEAVE</span>
+            <h3>Link across modalities</h3>
+            <p>Segments become nodes in a graph, connected by typed, confidence-weighted relations.</p>
+            <ul>
+              <li>Typed entities shared across files</li>
+              <li>Speakers resolved from the recording itself</li>
+              <li>Temporal order within every source</li>
+              <li>SQLite system of record, rebuildable index</li>
+            </ul>
+          </article>
+          <article class="card step">
+            <span class="n">03 / RETRIEVE</span>
+            <h3>Answer with evidence</h3>
+            <p>Search runs over speech, text and visual descriptions together, and the answer cites what it used.</p>
+            <ul>
+              <li>Retrieval across all modalities at once</li>
+              <li>Grounded answers with inline citations</li>
+              <li>Jump to the second, page or region</li>
+              <li>Side-by-side text-only baseline</li>
+            </ul>
+          </article>
+        </div>
       </div>
-      <div class="hits-list" id="hits-list"></div>
+    </section>
+
+    <section class="block" id="modalities">
+      <div class="wrap">
+        <div class="block-head">
+          <p class="eyebrow">Modalities</p>
+          <h2>Five threads, one graph.</h2>
+          <p>Each modality has its own colour throughout Weft, so you can see at a glance where an answer's evidence came from.</p>
+        </div>
+        <div class="modalities">
+          <article class="card modality mod-video" style="--c:var(--m-video)">
+            <span class="chip mod mod-video"><i class="dot"></i>Video</span>
+            <h3>Recordings &amp; screen shares</h3>
+            <p>Speech aligned with what was on screen. Scenes cut where the picture changes; repeated slides recognised.</p>
+            <span class="unit">unit · scene window ≤ 30 s</span>
+          </article>
+          <article class="card modality mod-audio" style="--c:var(--m-audio)">
+            <span class="chip mod mod-audio"><i class="dot"></i>Audio</span>
+            <h3>Calls &amp; stand-ups</h3>
+            <p>Timestamped transcript with Whisper's own confidence, attributed to speakers.</p>
+            <span class="unit">unit · speech segment</span>
+          </article>
+          <article class="card modality mod-image" style="--c:var(--m-image)">
+            <span class="chip mod mod-image"><i class="dot"></i>Image</span>
+            <h3>Diagrams &amp; screenshots</h3>
+            <p>Visual description, OCR text located by bounding box, labelled regions and typed entities.</p>
+            <span class="unit">unit · image + regions</span>
+          </article>
+          <article class="card modality mod-pdf" style="--c:var(--m-pdf)">
+            <span class="chip mod mod-pdf"><i class="dot"></i>PDF</span>
+            <h3>Docs &amp; decks</h3>
+            <p>The exact text layer plus a vision pass over each rendered page for charts and figures.</p>
+            <span class="unit">unit · page</span>
+          </article>
+          <article class="card modality mod-json" style="--c:var(--m-json)">
+            <span class="chip mod mod-json"><i class="dot"></i>JSON</span>
+            <h3>Tickets, logs &amp; notes</h3>
+            <p>Structured records and plain text taken as given, with their own locators and entities.</p>
+            <span class="unit">unit · record</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="trace">
+      <div class="wrap trace">
+        <div>
+          <div class="block-head" style="margin-bottom:32px">
+            <p class="eyebrow">Traceability</p>
+            <h2>Answers you can check.</h2>
+          </div>
+          <div class="trace-points">
+            <div><h3>Inline citations</h3><p>Every claim points to the evidence card it came from, colour-coded by modality.</p></div>
+            <div><h3>Jump to the moment</h3><p>Video and audio open at the cited second; PDF pages and images open with the matching regions outlined.</p></div>
+            <div><h3>Confidence you can see</h3><p>Each segment carries its extractor's confidence, so a shaky transcription or failed vision call is visible, not hidden.</p></div>
+          </div>
+        </div>
+        <div class="card mock" aria-label="Example answer in the Weft workspace">
+          <div class="mock-bar">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+            <span class="q">How did the team fix the checkout timeouts, and how do we know it worked?</span>
+          </div>
+          <div class="mock-answer">
+            Retries to the payments API had no backoff, which amplified load during the incident<span class="cite" style="--c:var(--m-video)">1</span>. The fix wraps calls in exponential backoff with jitter (base 200 ms, max 5 retries) and a circuit breaker<span class="cite" style="--c:var(--m-pdf)">2</span>, shown on the slide at 00:12<span class="cite" style="--c:var(--m-video)">3</span>. After the deploy, p99 latency fell from 4.2 s to 310 ms<span class="cite" style="--c:var(--m-image)">4</span>.
+          </div>
+          <div class="mock-ev">
+            <div class="row mod mod-video"><i class="dot"></i><b>incident-review.mp4</b><span class="loc">00:00 – 00:12</span></div>
+            <div class="row mod mod-pdf"><i class="dot"></i><b>checkout-timeout-postmortem.pdf</b><span class="loc">Page 3</span></div>
+            <div class="row mod mod-video"><i class="dot"></i><b>incident-review.mp4</b><span class="loc">00:12 – 00:25</span></div>
+            <div class="row mod mod-image"><i class="dot"></i><b>grafana-after-fix.png</b><span class="loc">region · p99 panel</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="api">
+      <div class="wrap">
+        <div class="block-head">
+          <p class="eyebrow">API</p>
+          <h2>Built to sit under your RAG stack.</h2>
+          <p>Everything in the workspace is a documented HTTP endpoint. Upload sources, poll jobs, query, and inspect the graph directly.</p>
+        </div>
+        <div class="schema">
+<pre class="code"><span class="c"># upload a recording as a background job</span>
+curl -F <span class="s">"file=@design-review.mp4"</span> \
+  <span class="s">"localhost:8000/upload/video?background=true"</span>
+
+<span class="c"># poll it</span>
+curl localhost:8000/jobs/<span class="k">{job_id}</span>
+
+<span class="c"># ask across everything</span>
+curl -X POST localhost:8000/query \
+  -H <span class="s">"Content-Type: application/json"</span> \
+  -d <span class="s">'{"query": "who explained the cache design?"}'</span></pre>
+<pre class="code"><span class="c">// every result is a segment with full provenance</span>
+{
+  <span class="k">"segment_id"</span>: <span class="s">"5b0c…"</span>,
+  <span class="k">"modality"</span>: <span class="s">"video"</span>,
+  <span class="k">"source"</span>: <span class="s">"design-review.mp4"</span>,
+  <span class="k">"timestamp"</span>: <span class="s">"12:40 - 13:05"</span>,
+  <span class="k">"transcript"</span>: <span class="s">"…we put Redis in front of the read replicas…"</span>,
+  <span class="k">"visual_summary"</span>: <span class="s">"Diagram: API → Redis → 2 replicas"</span>,
+  <span class="k">"frame_path"</span>: <span class="s">"/derived/…/scene_004_12_58.jpg"</span>,
+  <span class="k">"confidence"</span>: 0.83,
+  <span class="k">"entities"</span>: [<span class="s">"Redis"</span>, <span class="s">"read replicas"</span>]
+}</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta-band">
+      <div class="wrap">
+        <h2>Point it at your recordings.</h2>
+        <p>Load the sample dataset in one click, or upload your own video, audio, images and documents.</p>
+        <div class="ctas">
+          <a class="btn btn-primary btn-lg" href="/app">Open workspace</a>
+          <a class="btn btn-lg" href="/docs">API reference</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <div class="wrap">
+      <a class="brand" href="/"><img src="/static/img/weft-mark.svg" alt="" />weft</a>
+      <span>© <span data-year></span> Weft</span>
+      <nav aria-label="Footer">
+        <a href="/app">Workspace</a>
+        <a href="/docs">API</a>
+        <a href="https://github.com/Priyansh10ff/Weft" target="_blank" rel="noopener">GitHub</a>
+      </nav>
     </div>
+  </footer>
 
-  </section>
-</main>
-
-<script src="/static/app.js"></script>
+  <script type="module" src="/static/js/landing.js"></script>
 </body>
 </html>

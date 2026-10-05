@@ -39,7 +39,7 @@ from app.schemas.records import (
 )
 from app.services.storage import storage_root
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -191,6 +191,11 @@ class KnowledgeRepository:
     def _migrate(self) -> None:
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            job_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(jobs)")}
+            if "source_attributes" not in job_columns:
+                self._conn.execute(
+                    "ALTER TABLE jobs ADD COLUMN source_attributes TEXT NOT NULL DEFAULT '{}'"
+                )
             self._conn.execute(
                 "INSERT INTO schema_meta(key, value) VALUES ('version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -631,20 +636,88 @@ class KnowledgeRepository:
             (self._row_to_relation(r), "out" if r["src_id"] == node_id else "in") for r in rows
         ]
 
+    def delete_relations(
+        self, relations: Iterable[RelationType], node_ids: list[str] | None = None
+    ) -> int:
+        """Delete edges of the given types (optionally only those touching ``node_ids``)."""
+        types = [r.value for r in relations]
+        if not types:
+            return 0
+        type_marks = ",".join("?" * len(types))
+        with self._lock:
+            before = self._conn.total_changes
+            if node_ids is None:
+                self._conn.execute(f"DELETE FROM relations WHERE relation IN ({type_marks})", types)
+            else:
+                for chunk in _chunks(node_ids, 400):
+                    marks = ",".join("?" * len(chunk))
+                    self._conn.execute(
+                        f"DELETE FROM relations WHERE relation IN ({type_marks}) "
+                        f"AND (src_id IN ({marks}) OR dst_id IN ({marks}))",
+                        [*types, *chunk, *chunk],
+                    )
+            return self._conn.total_changes - before
+
+    def mentions_of(
+        self, entity_ids: list[str], exclude_source_id: str | None = None
+    ) -> list[tuple[str, str]]:
+        """``(segment_id, entity_id)`` for every segment mentioning one of ``entity_ids``."""
+        found: list[tuple[str, str]] = []
+        for chunk in _chunks(entity_ids, 400):
+            marks = ",".join("?" * len(chunk))
+            params: list[Any] = [RelationType.MENTIONS.value, *chunk]
+            exclude = ""
+            if exclude_source_id is not None:
+                exclude = "AND g.source_id != ?"
+                params.append(exclude_source_id)
+            rows = self._fetchall(
+                f"""
+                SELECT r.src_id AS segment_id, r.dst_id AS entity_id
+                FROM relations r JOIN segments g ON g.id = r.src_id
+                WHERE r.relation = ? AND r.dst_id IN ({marks}) {exclude}
+                """,
+                params,
+            )
+            found.extend((row["segment_id"], row["entity_id"]) for row in rows)
+        return found
+
+    def all_entities(self) -> list[EntityRecord]:
+        return [self._row_to_entity(r) for r in self._fetchall("SELECT * FROM entities")]
+
+    def same_as_groups(self) -> dict[str, str]:
+        """Map every entity ID to a canonical member of its ``same_as`` component."""
+        parent: dict[str, str] = {}
+
+        def find(x: str) -> str:
+            parent.setdefault(x, x)
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for row in self._fetchall(
+            "SELECT src_id, dst_id FROM relations WHERE relation = ?", (RelationType.SAME_AS.value,)
+        ):
+            a, b = find(row["src_id"]), find(row["dst_id"])
+            if a != b:
+                parent[max(a, b)] = min(a, b)
+        return {node: find(node) for node in list(parent)}
+
     # ------------------------------------------------------------------- jobs
 
     def create_job(self, job: JobRecord) -> JobRecord:
         self._execute(
             """
             INSERT INTO jobs (id, source_id, filename, modality, file_path, content_type, status,
-                              stage, progress, error, warnings, result, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              stage, progress, error, warnings, result, created_at, updated_at,
+                              source_attributes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.id, job.source_id, job.filename, job.modality.value, job.file_path,
                 job.content_type, job.status.value, job.stage, job.progress, job.error,
                 json.dumps(job.warnings), _dumps(job.result),
-                _ts(job.created_at), _ts(job.updated_at),
+                _ts(job.created_at), _ts(job.updated_at), _dumps(job.source_attributes),
             ),
         )
         return job
@@ -728,6 +801,7 @@ def _row_to_job(row: sqlite3.Row) -> JobRecord:
         error=row["error"],
         warnings=warnings if isinstance(warnings, list) else [],
         result=_loads(row["result"]),
+        source_attributes=_loads(row["source_attributes"]) if "source_attributes" in row.keys() else {},
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )

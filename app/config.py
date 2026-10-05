@@ -62,6 +62,9 @@ class Settings:
     job_workers: int
     max_upload_mb: int
 
+    # Website
+    demo_enabled: bool
+
     @property
     def gemini_enabled(self) -> bool:
         return bool(self.gemini_api_key)
@@ -83,4 +86,5 @@ def get_settings() -> Settings:
         entity_batch_size=max(1, _int("ENTITY_BATCH_SIZE", 25)),
         job_workers=max(1, _int("JOB_WORKERS", 2)),
         max_upload_mb=max(1, _int("MAX_UPLOAD_MB", 500)),
+        demo_enabled=_flag("ENABLE_DEMO", True),
     )

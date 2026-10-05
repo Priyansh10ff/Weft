@@ -70,19 +70,31 @@ class NodeKind(str, Enum):
 class RelationType(str, Enum):
     """Edge vocabulary of the knowledge graph.
 
-    ``MENTIONS``, ``NEXT`` and ``SPOKEN_BY`` are produced at ingestion time.  The remaining
-    types are part of the schema contract and are produced by the
-    cross-modal linking stage.
+    ``MENTIONS``, ``NEXT`` and ``SPOKEN_BY`` are produced at ingestion time;
+    ``CO_OCCURS``, ``SHOWS_SAME``, ``DEPICTS``, ``CORROBORATES`` and
+    ``SAME_AS`` by the cross-modal linker (``app.services.linker``).
+    ``SUPERSEDES`` is reserved for fact-level change tracking.
     """
 
     MENTIONS = "mentions"  # segment -> entity
     NEXT = "next"  # segment -> following segment in the same source
-    CO_OCCURS = "co_occurs"  # speech <-> visual evidence at the same time
-    DEPICTS = "depicts"  # visual segment -> segment/entity it illustrates
-    CORROBORATES = "corroborates"  # segments in different sources stating the same fact
+    CO_OCCURS = "co_occurs"  # windows of one scene: speech while the same visual was on screen
+    SHOWS_SAME = "shows_same"  # a slide/frame shown again later in the same recording
+    DEPICTS = "depicts"  # visual segment -> speech/text segment it illustrates (other source)
+    CORROBORATES = "corroborates"  # segments in different sources stating the same thing
     SAME_AS = "same_as"  # entity <-> entity resolved as identical
     SUPERSEDES = "supersedes"  # later fact replaces an earlier one
     SPOKEN_BY = "spoken_by"  # speech segment -> person/speaker entity
+
+
+# Relations the linker owns: recomputed (deleted and re-added) on relink.
+LINKER_RELATIONS = (
+    RelationType.CO_OCCURS,
+    RelationType.SHOWS_SAME,
+    RelationType.DEPICTS,
+    RelationType.CORROBORATES,
+    RelationType.SAME_AS,
+)
 
 
 class BoundingBox(BaseModel):
@@ -243,6 +255,7 @@ class SourceSummary(BaseModel):
 
     source: SourceRecord
     segment_count: int = Field(ge=0)
+    media_url: str | None = None
 
 
 class SourceDetail(BaseModel):
@@ -250,6 +263,7 @@ class SourceDetail(BaseModel):
 
     source: SourceRecord
     segments: list[SegmentRecord] = Field(default_factory=list)
+    media_url: str | None = None
 
 
 class EntityMention(BaseModel):
@@ -269,6 +283,12 @@ class LinkedNode(BaseModel):
     node_kind: NodeKind
     node_id: str
     label: str | None = None
+    modality: str | None = None
+    source_id: str | None = None
+    source_filename: str | None = None
+    locator: str | None = None
+    frame_path: str | None = None
+    snippet: str | None = None
 
 
 class SegmentDetail(BaseModel):
@@ -278,6 +298,7 @@ class SegmentDetail(BaseModel):
     source: SourceRecord
     entities: list[EntityMention] = Field(default_factory=list)
     links: list[LinkedNode] = Field(default_factory=list)
+    media_url: str | None = None
 
 
 class EntitySummary(BaseModel):
@@ -334,5 +355,60 @@ class JobRecord(BaseModel):
     error: str | None = None
     warnings: list[str] = Field(default_factory=list)
     result: dict[str, Any] = Field(default_factory=dict)
+    source_attributes: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
+
+
+# ---------------------------------------------------------------------------
+# Temporal views and graph neighbourhoods
+# ---------------------------------------------------------------------------
+
+
+class TimelineEntry(BaseModel):
+    """One mention of an entity, placed in time."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    when: datetime = Field(description="Recording/document time of the source, else ingestion time.")
+    when_source: str = Field(description="'recorded_at' or 'ingested_at'.")
+    offset_seconds: float | None = Field(default=None, description="Position inside the source.")
+    segment: SegmentRecord
+    source: SourceRecord
+
+
+class EntityTimeline(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entity: EntityRecord
+    aliases: list[EntityRecord] = Field(default_factory=list, description="Entities linked by same_as.")
+    entries: list[TimelineEntry] = Field(default_factory=list)
+
+
+class GraphNode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: NodeKind
+    label: str
+    modality: str | None = None
+    entity_type: str | None = None
+    source_id: str | None = None
+
+
+class GraphEdge(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    source: str
+    target: str
+    relation: RelationType
+    confidence: float
+
+
+class GraphView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    center: str
+    nodes: list[GraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)

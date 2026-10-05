@@ -45,7 +45,7 @@ from uuid import NAMESPACE_URL, uuid5  # noqa: E402
 
 from app.db.repository import KnowledgeRepository, get_repository  # noqa: E402
 from app.schemas.knowledge import KnowledgeNode, MediaModality, SourceAsset  # noqa: E402
-from app.services.ingestion import IngestResult, delete_source, ingest_nodes  # noqa: E402
+from app.services.ingestion import IngestResult, delete_source, ingest_nodes, locator_from_node  # noqa: E402
 from app.services.vector_store import VectorStore  # noqa: E402
 
 
@@ -60,9 +60,9 @@ def build_demo_nodes() -> list[KnowledgeNode]:
                 "already struggling."
             ),
             modality=MediaModality.VIDEO,
-            timestamp="02:10 - 02:34",
+            timestamp="00:00 - 00:12",
             source="incident-review.mp4",
-            frame_path="/frames/incident-review_02_10.jpg",
+            frame_path=None,
             entities=["checkout service", "payments API", "timeout"],
             provenance={"kind": "video_transcript_segment"},
         ),
@@ -76,9 +76,9 @@ def build_demo_nodes() -> list[KnowledgeNode]:
                 "to each wait. A circuit breaker box sits after the retry loop."
             ),
             modality=MediaModality.VIDEO,
-            timestamp="04:05 - 04:20",
+            timestamp="00:12 - 00:25",
             source="incident-review.mp4",
-            frame_path="/frames/incident-review_04_05.jpg",
+            frame_path=None,
             entities=["exponential backoff", "jitter", "circuit breaker"],
             provenance={"kind": "video_frame_summary"},
         ),
@@ -104,7 +104,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             modality=MediaModality.PDF,
             timestamp="Page 3",
             source="checkout-timeout-postmortem.pdf",
-            frame_path="/frames/postmortem_page_3.jpg",
+            frame_path=None,
             entities=["exponential backoff", "circuit breaker", "checkout-service"],
             provenance={"kind": "pdf_page"},
         ),
@@ -120,7 +120,22 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             ),
             modality=MediaModality.IMAGE,
             source="grafana-after-fix.png",
-            frame_path="/uploads/grafana-after-fix.png",
+            frame_path=None,
+            attributes={
+                "image_type": "screenshot",
+                "ocr_blocks": [
+                    {"text": "Grafana Dashboard: p99 latency (checkout->payments)", "box": {"x": 0.264, "y": 0.078, "width": 0.306, "height": 0.03}},
+                    {"text": "before: 4200ms  after: 310ms  error rate 18% -> 0.8%", "box": {"x": 0.266, "y": 0.138, "width": 0.289, "height": 0.026}},
+                    {"text": "base_delay=200ms x2 max=5", "box": {"x": 0.354, "y": 0.3, "width": 0.178, "height": 0.028}},
+                    {"text": "Checkout", "box": {"x": 0.046, "y": 0.44, "width": 0.198, "height": 0.116}},
+                    {"text": "Retry+Jitter", "box": {"x": 0.356, "y": 0.44, "width": 0.198, "height": 0.116}},
+                    {"text": "Payments API", "box": {"x": 0.666, "y": 0.44, "width": 0.241, "height": 0.116}},
+                ],
+                "regions": [
+                    {"label": "p99 latency panel", "description": "Latency graph for checkout -> payments", "box": {"x": 0.264, "y": 0.196, "width": 0.639, "height": 0.07}},
+                    {"label": "Retry path", "description": "Checkout -> Retry+Jitter -> Payments API", "box": {"x": 0.031, "y": 0.436, "width": 0.894, "height": 0.13}},
+                ],
+            },
             entities=["Grafana", "p99 latency", "checkout-service"],
             provenance={"kind": "standalone_image"},
         ),
@@ -134,7 +149,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             modality=MediaModality.VIDEO,
             timestamp="15:00 - 15:20",
             source="all-hands-q3.mp4",
-            frame_path="/frames/all-hands_15_00.jpg",
+            frame_path=None,
             entities=["onboarding", "illustrations"],
             provenance={"kind": "video_transcript_segment"},
         ),
@@ -189,7 +204,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             modality=MediaModality.VIDEO,
             timestamp="00:00 - 00:11",
             source="onboarding-walkthrough.mp4",
-            frame_path="/frames/onboarding-walkthrough_00_00.jpg",
+            frame_path=None,
             entities=["onboarding", "permissions", "funnel"],
             provenance={"kind": "video_transcript_segment"},
         ),
@@ -202,9 +217,9 @@ def build_demo_nodes() -> list[KnowledgeNode]:
                 "deferred until the user taps 'Invite a friend'."
             ),
             modality=MediaModality.VIDEO,
-            timestamp="00:11 - 00:23",
+            timestamp="00:11 - 00:26",
             source="onboarding-walkthrough.mp4",
-            frame_path="/frames/onboarding-walkthrough_00_11.jpg",
+            frame_path=None,
             entities=["permission screens", "deferred contacts access"],
             provenance={"kind": "video_frame_summary"},
         ),
@@ -229,7 +244,7 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             modality=MediaModality.PDF,
             timestamp="Page 3",
             source="onboarding-design-spec.pdf",
-            frame_path="/frames/onboarding-design-spec_page_3.jpg",
+            frame_path=None,
             entities=["completion rate", "A/B test"],
             provenance={"kind": "pdf_page"},
         ),
@@ -254,7 +269,23 @@ def build_demo_nodes() -> list[KnowledgeNode]:
             ),
             modality=MediaModality.IMAGE,
             source="onboarding-ab-results.png",
-            frame_path="/uploads/onboarding-ab-results.png",
+            frame_path=None,
+            attributes={
+                "image_type": "table",
+                "ocr_blocks": [
+                    {"text": "Onboarding A/B Test Results", "box": {"x": 0.042, "y": 0.06, "width": 0.14, "height": 0.028}},
+                    {"text": "Metric: permission screen completion rate", "box": {"x": 0.042, "y": 0.16, "width": 0.203, "height": 0.028}},
+                    {"text": "Before (single screen, 3 asks):", "box": {"x": 0.0625, "y": 0.3, "width": 0.142, "height": 0.028}},
+                    {"text": "completion = 39%", "box": {"x": 0.0625, "y": 0.36, "width": 0.088, "height": 0.028}},
+                    {"text": "After (split screens, deferred contacts):", "box": {"x": 0.542, "y": 0.3, "width": 0.182, "height": 0.028}},
+                    {"text": "completion = 74%", "box": {"x": 0.542, "y": 0.36, "width": 0.088, "height": 0.028}},
+                    {"text": "Contacts permission requests dropped 90% (now deferred)", "box": {"x": 0.042, "y": 0.598, "width": 0.28, "height": 0.03}},
+                ],
+                "regions": [
+                    {"label": "Before", "description": "Single combined permission screen", "box": {"x": 0.042, "y": 0.26, "width": 0.4375, "height": 0.26}},
+                    {"label": "After", "description": "Split screens with deferred contacts access", "box": {"x": 0.521, "y": 0.26, "width": 0.4375, "height": 0.26}},
+                ],
+            },
             entities=["A/B test", "completion rate"],
             provenance={"kind": "standalone_image"},
         ),
@@ -280,6 +311,74 @@ def build_demo_nodes() -> list[KnowledgeNode]:
     ]
 
 
+SAMPLES = Path(__file__).resolve().parent / "samples"
+
+# The slide images baked into each sample video, in order of appearance.
+VIDEO_FRAMES = {
+    "incident-review.mp4": ["frame_problem.png", "frame_fix_diagram.png"],
+    "onboarding-walkthrough.mp4": ["frame_onboarding_problem.png", "frame_onboarding_fix.png"],
+}
+
+
+def _render_pdf_page(pdf: Path, page_number: int, out_dir: Path) -> Path | None:
+    try:
+        import pymupdf as fitz  # type: ignore[import-untyped]
+    except ImportError:
+        try:
+            import fitz  # type: ignore[import-untyped,no-redef]
+        except ImportError:
+            return None
+    try:
+        with fitz.open(str(pdf)) as doc:
+            if not 1 <= page_number <= doc.page_count:
+                return None
+            target = out_dir / f"page_{page_number:04d}.jpg"
+            doc[page_number - 1].get_pixmap(dpi=110).save(str(target))
+            return target
+    except Exception:
+        return None
+
+
+def _attach_sample_media(
+    source_id: str, filename: str, modality: MediaModality, nodes: list[KnowledgeNode]
+) -> str | None:
+    """Copy the real sample file (and its frames/pages) into storage.
+
+    Gives the demo playable media and real thumbnails. Returns the storage
+    key of the original file, or ``None`` when no sample file exists.
+    """
+    import shutil
+
+    from app.services.storage import derivative_directory, derived_url, storage_root
+
+    sample = SAMPLES / filename
+    storage_path = None
+    if sample.is_file():
+        upload_dir = storage_root() / "uploads" / source_id
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(sample, upload_dir / filename)
+        storage_path = f"uploads/{source_id}/{filename}"
+
+    if modality is MediaModality.VIDEO:
+        frames = VIDEO_FRAMES.get(filename, [])
+        out = derivative_directory(source_id, "frames")
+        for node, frame_name in zip(nodes, frames):
+            if (SAMPLES / frame_name).is_file():
+                shutil.copyfile(SAMPLES / frame_name, out / frame_name)
+                node.frame_path = derived_url(out / frame_name)
+    elif modality is MediaModality.IMAGE and storage_path:
+        for node in nodes:
+            node.frame_path = "/" + storage_path
+    elif modality is MediaModality.PDF and sample.is_file():
+        out = derivative_directory(source_id, "pages")
+        for node in nodes:
+            page = locator_from_node(node).page_number
+            rendered = _render_pdf_page(sample, page, out) if page else None
+            if rendered is not None:
+                node.frame_path = derived_url(rendered)
+    return storage_path
+
+
 def seed_demo(
     repository: KnowledgeRepository | None = None,
     vector_store: VectorStore | None = None,
@@ -300,15 +399,22 @@ def seed_demo(
         if repo.get_source(str(source_id)) is not None:
             delete_source(str(source_id), repository=repo, vector_store=vector_store)
         asset = SourceAsset(source_id=source_id, filename=filename, modality=modality)
-        results.append(
-            ingest_nodes(
-                asset,
-                nodes,
-                source_attributes={"demo_seed": True},
-                repository=repo,
-                vector_store=vector_store,
-            )
+        storage_path = _attach_sample_media(str(source_id), filename, modality, nodes)
+        result = ingest_nodes(
+            asset,
+            nodes,
+            source_attributes={"demo_seed": True},
+            repository=repo,
+            vector_store=vector_store,
         )
+        if storage_path:
+            # No content hash on purpose: uploading the real sample later must
+            # run the real pipeline instead of being deduplicated against
+            # this hand-written demo knowledge.
+            result.source.storage_path = storage_path
+            result.source.size_bytes = (SAMPLES / filename).stat().st_size
+            repo.upsert_source(result.source)
+        results.append(result)
     return results
 
 

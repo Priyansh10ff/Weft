@@ -84,3 +84,38 @@ def test_delete_source_endpoint(client):
     assert response.status_code == 200 and response.json()["deleted_segments"] == 2
     assert client.get("/stats").json()["segments"] == 0
     assert client.delete(f"/sources/{body['source_id']}").status_code == 404
+
+
+def test_health_reports_providers_without_secrets(client, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "secret-gemini")
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    assert body["providers"]["vision"] is True and body["providers"]["transcription"] is False
+    assert "secret-gemini" not in str(body)
+
+
+def test_pages_are_served(client):
+    landing = client.get("/")
+    workspace = client.get("/app")
+    assert landing.status_code == 200 and "Weft" in landing.text
+    assert workspace.status_code == 200 and "/static/js/app/main.js" in workspace.text
+    assert client.get("/static/css/weft.css").status_code == 200
+
+
+def test_media_url_for_stored_uploads(client):
+    body = _upload_tickets(client)
+    sources = client.get("/sources").json()
+    assert sources[0]["media_url"].startswith(f"/uploads/{body['source_id']}/")
+    detail = client.get(f"/sources/{body['source_id']}").json()
+    assert detail["media_url"] == sources[0]["media_url"]
+    seg = client.get(f"/segments/{detail['segments'][0]['id']}").json()
+    assert seg["media_url"] == sources[0]["media_url"]
+
+
+def test_demo_seed_is_idempotent_and_can_be_disabled(client, monkeypatch):
+    first = client.post("/demo/seed").json()
+    second = client.post("/demo/seed").json()
+    assert first["sources"] == second["sources"] >= 5
+    assert client.get("/stats").json()["sources"] == first["sources"]
+    monkeypatch.setenv("ENABLE_DEMO", "false")
+    assert client.post("/demo/seed").status_code == 403

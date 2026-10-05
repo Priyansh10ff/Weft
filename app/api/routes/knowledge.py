@@ -6,6 +6,8 @@ each produced (with locator, confidence, extractor), the entities they
 mention, and the typed relations between them.
 """
 
+from urllib.parse import quote
+
 from anyio import to_thread
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -19,12 +21,21 @@ from app.schemas.records import (
     NodeKind,
     SegmentDetail,
     SourceDetail,
+    SourceRecord,
     SourceSummary,
 )
 from app.services.ingestion import delete_source
 from app.services.vector_store import VectorStoreError
 
 router = APIRouter(tags=["knowledge"])
+
+
+def media_url(source: SourceRecord) -> str | None:
+    """URL of the original upload under the ``/uploads`` mount, if it was stored."""
+    key = source.storage_path or ""
+    if not key.startswith("uploads/"):
+        return None
+    return "/" + "/".join(quote(part) for part in key.split("/"))
 
 
 def _not_found(kind: str, item_id: str) -> HTTPException:
@@ -38,7 +49,10 @@ async def knowledge_stats() -> KnowledgeStats:
 
 @router.get("/sources", response_model=list[SourceSummary])
 async def list_sources() -> list[SourceSummary]:
-    return await to_thread.run_sync(lambda: get_repository().list_sources())
+    summaries = await to_thread.run_sync(lambda: get_repository().list_sources())
+    for summary in summaries:
+        summary.media_url = media_url(summary.source)
+    return summaries
 
 
 @router.get("/sources/{source_id}", response_model=SourceDetail)
@@ -48,7 +62,9 @@ async def get_source(source_id: str) -> SourceDetail:
         source = repo.get_source(source_id)
         if source is None:
             return None
-        return SourceDetail(source=source, segments=repo.list_segments(source_id))
+        return SourceDetail(
+            source=source, segments=repo.list_segments(source_id), media_url=media_url(source)
+        )
 
     detail = await to_thread.run_sync(load)
     if detail is None:
@@ -117,6 +133,7 @@ async def get_segment(segment_id: str) -> SegmentDetail:
             source=source,
             entities=[EntityMention(entity=e, confidence=c) for e, c in mentions],
             links=links,
+            media_url=media_url(source),
         )
 
     detail = await to_thread.run_sync(load)
@@ -146,3 +163,27 @@ async def get_entity(entity_id: str) -> EntityDetail:
     if detail is None:
         raise _not_found("Entity", entity_id)
     return detail
+
+
+@router.post("/demo/seed", tags=["system"])
+async def seed_demo_data() -> dict[str, int]:
+    """Load the bundled cross-modal demo scenario (idempotent; no API keys needed)."""
+    from app.config import get_settings
+
+    if not get_settings().demo_enabled:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Demo data is disabled.")
+
+    def seed() -> dict[str, int]:
+        from test_data.seed_cross_modal_demo import seed_demo
+
+        results = seed_demo()
+        return {
+            "sources": len(results),
+            "segments": sum(len(r.segments) for r in results),
+            "relations": sum(r.relation_count for r in results),
+        }
+
+    try:
+        return await to_thread.run_sync(seed)
+    except VectorStoreError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc

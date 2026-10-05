@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Weft</title>
+  <meta name="description" content="Weft workspace: ask questions across video, audio, images, PDFs and records, with every answer traced to its source." />
+  <meta name="theme-color" content="#0a0a09" />
+  <link rel="icon" href="/static/img/weft-mark.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/weft.css" />
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body class="app">
+  <a class="skip" href="#view">Skip to content</a>
+  <header class="topbar">
+    <button class="btn btn-ghost btn-icon" id="nav-toggle" type="button" aria-label="Menu">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/></svg>
+    </button>
+    <a class="brand" href="/"><img src="/static/img/weft-mark.svg" alt="" width="22" height="22" />weft</a>
+    <span></span>
+  </header>
+
+  <aside class="side" aria-label="Workspace">
+    <a class="brand" href="/" title="Weft home"><img src="/static/img/weft-mark.svg" alt="" width="24" height="24" />weft</a>
+    <nav class="side-nav">
+      <a href="#/ask" data-nav="ask">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+        Ask <kbd>/</kbd>
+      </a>
+      <a href="#/library" data-nav="library">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m8 2 6 3-6 3-6-3 6-3Z"/><path d="m2 8 6 3 6-3M2 11l6 3 6-3"/></svg>
+        Library
+      </a>
+      <a href="#/entities" data-nav="entities">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="4" cy="4" r="1.8"/><circle cx="12" cy="5" r="1.8"/><circle cx="7" cy="12" r="1.8"/><path d="M5.6 4.4 10.3 4.7M5 5.6l1.4 4.8M11 6.6 8.2 10.6"/></svg>
+        Entities
+      </a>
+    </nav>
+    <div class="side-foot">
+      <p class="section-label">System</p>
+      <div id="status" class="status"><p class="faint">Connecting…</p></div>
+      <div class="side-links">
+        <a href="/docs" target="_blank" rel="noopener">API docs</a>
+        <a href="https://github.com/Priyansh10ff/Weft" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </aside>
+  <div class="side-scrim"></div>
+
+  <main id="view" class="view" tabindex="-1"></main>
+  <div class="toasts" aria-live="polite"></div>
+  <noscript><p style="padding:24px">Weft needs JavaScript enabled.</p></noscript>
+  <script type="module" src="/static/js/app/main.js"></script>
+</body>
+</html>
