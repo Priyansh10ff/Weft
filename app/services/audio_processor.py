@@ -1,6 +1,7 @@
 """Free-tier Groq Whisper transcription with a local faster-whisper fallback."""
 
 import logging
+import math
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -41,6 +42,25 @@ def _groq_client() -> Any:
         raise AudioProcessingError("GROQ_API_KEY is not configured.") from exc
 
 
+def segment_confidence(avg_logprob: object, no_speech_prob: object) -> float | None:
+    """Whisper's own certainty for a segment, in ``[0, 1]``.
+
+    ``exp(avg_logprob)`` is the geometric-mean token probability; it is
+    discounted by the probability that the span is not speech at all.
+    Returns ``None`` when the provider did not report the statistics.
+    """
+    try:
+        logprob = float(avg_logprob)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    try:
+        no_speech = float(no_speech_prob)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        no_speech = 0.0
+    value = math.exp(min(0.0, logprob)) * (1.0 - min(1.0, max(0.0, no_speech)))
+    return round(min(1.0, max(0.0, value)), 4)
+
+
 def _normalize_segments(response: object) -> list[dict[str, float | str]]:
     """Normalize Groq's verbose JSON response into the public segment shape."""
     transcripts: list[dict[str, float | str]] = []
@@ -56,9 +76,18 @@ def _normalize_segments(response: object) -> list[dict[str, float | str]]:
             raise AudioProcessingError("Whisper returned a segment with an invalid time range.")
         text = str(_response_value(raw_segment, "text", "")).strip()
         if text:
-            transcripts.append(
-                {"start_time": start_time, "end_time": end_time, "text": text}
+            entry: dict[str, float | str] = {
+                "start_time": start_time,
+                "end_time": end_time,
+                "text": text,
+            }
+            confidence = segment_confidence(
+                _response_value(raw_segment, "avg_logprob"),
+                _response_value(raw_segment, "no_speech_prob"),
             )
+            if confidence is not None:
+                entry["confidence"] = confidence
+            transcripts.append(entry)
     return transcripts
 
 
@@ -94,15 +123,23 @@ def _transcribe_locally(path: Path) -> list[dict[str, float | str]]:
             compute_type="int8",
         )
         segments, _ = model.transcribe(str(path), vad_filter=True)
-        return [
-            {
+        results: list[dict[str, float | str]] = []
+        for segment in segments:
+            text = str(segment.text).strip()
+            if not text:
+                continue
+            entry: dict[str, float | str] = {
                 "start_time": float(segment.start),
                 "end_time": float(segment.end),
-                "text": str(segment.text).strip(),
+                "text": text,
             }
-            for segment in segments
-            if str(segment.text).strip()
-        ]
+            confidence = segment_confidence(
+                getattr(segment, "avg_logprob", None), getattr(segment, "no_speech_prob", None)
+            )
+            if confidence is not None:
+                entry["confidence"] = confidence
+            results.append(entry)
+        return results
     except Exception as exc:
         raise AudioProcessingError("Local faster-whisper transcription failed.") from exc
 

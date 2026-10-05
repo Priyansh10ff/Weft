@@ -1,40 +1,24 @@
-"""Standalone PNG/JPEG ingestion endpoint."""
+"""Standalone PNG/JPEG ingestion."""
 
-from pathlib import Path
+from fastapi import APIRouter, File, Query, Response, UploadFile
 
-from anyio import to_thread
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
-
-from app.api.routes._upload import acknowledge_upload, ingest_upload
+from app.api.routes._upload import handle_upload
 from app.schemas.knowledge import KnowledgeUploadResponse, MediaModality
-from app.services.image_processor import ImageProcessingError, process_image
-from app.services.storage import persist_upload
 
 router = APIRouter(prefix="/upload", tags=["uploads"])
 
+_BACKGROUND = Query(False, description="Return 202 immediately and process as a background job.")
+_FORCE = Query(False, description="Re-process even if identical bytes were already ingested.")
+
 
 @router.post("/image", response_model=KnowledgeUploadResponse)
-async def upload_image(file: UploadFile = File(...)) -> KnowledgeUploadResponse:
-    """Analyze a PNG/JPEG image with vision and store it as one IMAGE segment."""
-    if Path(file.filename or "").suffix.lower() not in {".png", ".jpg", ".jpeg"}:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only PNG and JPEG image uploads are supported.",
-        )
-    receipt = acknowledge_upload(file, MediaModality.IMAGE)
-    source_path = await persist_upload(file, receipt.source_asset.source_id)
-    try:
-        node = await to_thread.run_sync(process_image, str(source_path))
-    except ImageProcessingError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
-    result = await ingest_upload(receipt, [node], source_path)
-    return KnowledgeUploadResponse(
-        success=True,
-        processed_nodes=len(result.segments),
-        source=result.source.filename,
-        source_id=result.source.id,
-        entity_count=result.entity_count,
-        relation_count=result.relation_count,
+async def upload_image(
+    response: Response,
+    file: UploadFile = File(...),
+    background: bool = _BACKGROUND,
+    force: bool = _FORCE,
+) -> KnowledgeUploadResponse:
+    """Upload a PNG/JPEG; vision extracts a description, OCR blocks, regions and typed entities."""
+    return await handle_upload(
+        file, MediaModality.IMAGE, response, background=background, force=force
     )

@@ -18,11 +18,26 @@ def storage_root() -> Path:
     return root.resolve()
 
 
-def derivative_directory(source_id: UUID) -> Path:
-    """Create and return the directory that belongs only to one source asset."""
+def derivative_directory(source_id: UUID | str, *parts: str) -> Path:
+    """Create and return a directory that belongs only to one source asset.
+
+    Frames, page renders and other derived artifacts live here, so two
+    uploads can never overwrite each other's evidence.
+    """
     directory = storage_root() / "derived" / str(source_id)
+    for part in parts:
+        directory = directory / part
     directory.mkdir(parents=True, exist_ok=True)
     return directory
+
+
+def derived_url(path: Path) -> str:
+    """URL under the ``/derived`` static mount for a file in a derivative directory."""
+    try:
+        relative = path.resolve().relative_to(storage_root() / "derived")
+    except ValueError:
+        return f"/derived/{path.name}"
+    return f"/derived/{relative.as_posix()}"
 
 
 async def persist_upload(upload: UploadFile, source_id: UUID) -> Path:

@@ -7,7 +7,8 @@ records of ``app.schemas.records``:
 1. register the ``SourceRecord`` (with content hash and storage key),
 2. convert every node into a ``SegmentRecord`` with a parsed ``Locator``,
    a confidence and the extractor that produced it,
-3. upsert mentioned entities and add ``MENTIONS`` edges,
+3. upsert mentioned entities (typed) and add ``MENTIONS`` edges, and add
+   ``SPOKEN_BY`` edges to the speakers of speech segments,
 4. add ``NEXT`` edges between consecutive segments of time/page-ordered sources,
 5. commit all of the above atomically to SQLite, then
 6. embed the segments into the vector index.
@@ -64,6 +65,8 @@ _EXTRACTOR_PRIORS: dict[tuple[MediaModality, str], tuple[str, float]] = {
     (MediaModality.IMAGE, "vision"): ("vision-ocr", 0.75),
 }
 _VISUAL_FAILURE_PENALTY = 0.2
+# Mentions found by the regex fallback are less certain than model-extracted ones.
+_HEURISTIC_MENTION_FACTOR = 0.6
 
 
 @dataclass
@@ -188,12 +191,12 @@ def _kind_for(node: KnowledgeNode, modality: MediaModality) -> SegmentKind:
 
 
 def _extractor_and_prior(
-    modality: MediaModality, kind: SegmentKind, has_text: bool
+    modality: MediaModality, kind: SegmentKind, has_text: bool, from_ocr: bool = False
 ) -> tuple[str, float]:
     if modality is MediaModality.JSON:
         key = "note" if kind is SegmentKind.NOTE else "record"
     elif modality is MediaModality.PDF:
-        key = "text" if has_text else "visual"
+        key = "text" if has_text and not from_ocr else "visual"
     elif modality is MediaModality.AUDIO:
         key = "speech"
     elif modality is MediaModality.VIDEO:
@@ -209,12 +212,15 @@ def node_to_segment(
     kind = _kind_for(node, modality)
     text = _node_text(node)
     visual_summary, visual_failed = _clean_visual(node.visual_summary)
-    extractor, prior = _extractor_and_prior(modality, kind, has_text=bool(text))
+    extractor, prior = _extractor_and_prior(
+        modality, kind, has_text=bool(text), from_ocr=bool(node.attributes.get("text_from_ocr"))
+    )
 
     confidence = node.confidence if node.confidence is not None else prior
     attributes: dict[str, Any] = dict(node.attributes)
     if node.provenance:
         attributes["provenance"] = node.provenance
+    visual_failed = visual_failed or bool(node.attributes.get("visual_extraction_failed"))
     if visual_failed:
         attributes["visual_extraction_failed"] = True
         if node.confidence is None:
@@ -315,13 +321,22 @@ def ingest_nodes(
         repo.add_segments(segments)
 
         for segment, (node, _) in zip(segments, modality_nodes, strict=True):
+            text_entities = node.attributes.get("text_entities") or {}
+            heuristic_names = (
+                {str(n) for n in text_entities.get("names", [])}
+                if text_entities.get("method") == "heuristic"
+                else set()
+            )
             seen: set[str] = set()
             for name in node.entities:
-                entity = repo.upsert_entity(str(name))
+                entity = repo.upsert_entity(str(name), node.entity_types.get(name, "concept"))
                 if entity is None or entity.id in seen:
                     continue
                 seen.add(entity.id)
                 entity_ids.add(entity.id)
+                confidence = segment.confidence
+                if name in heuristic_names:
+                    confidence *= _HEURISTIC_MENTION_FACTOR
                 relations.append(
                     RelationRecord(
                         src_kind=NodeKind.SEGMENT,
@@ -329,8 +344,31 @@ def ingest_nodes(
                         dst_kind=NodeKind.ENTITY,
                         dst_id=entity.id,
                         relation=RelationType.MENTIONS,
-                        confidence=segment.confidence,
+                        confidence=round(confidence, 4),
                         attributes={"surface_form": str(name)},
+                    )
+                )
+
+            for speaker in node.attributes.get("speakers") or []:
+                label = str(speaker.get("label") or "").strip()
+                name = str(speaker.get("name") or "").strip()
+                if not label and not name:
+                    continue
+                # Unnamed labels are only meaningful within one recording.
+                display = name or f"{label} ({source.filename})"
+                entity = repo.upsert_entity(display, "person" if name else "speaker")
+                if entity is None:
+                    continue
+                entity_ids.add(entity.id)
+                relations.append(
+                    RelationRecord(
+                        src_kind=NodeKind.SEGMENT,
+                        src_id=segment.id,
+                        dst_kind=NodeKind.ENTITY,
+                        dst_id=entity.id,
+                        relation=RelationType.SPOKEN_BY,
+                        confidence=float(speaker.get("confidence") or 0.7),
+                        attributes={"label": label, "named": bool(name)},
                     )
                 )
 

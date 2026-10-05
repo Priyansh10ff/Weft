@@ -116,6 +116,9 @@ class KnowledgeNode(BaseModel):
     source: str | None = None
     frame_path: str | None = None
     entities: list[str] = Field(default_factory=list)
+    entity_types: dict[str, str] = Field(
+        default_factory=dict, description="Optional entity name -> type (person, system, metric, ...)."
+    )
     provenance: dict[str, Any] = Field(default_factory=dict)
     attributes: dict[str, Any] = Field(default_factory=dict)
     confidence: float | None = Field(
@@ -176,19 +179,6 @@ class QueryResponse(BaseModel):
 
     query: str
     results: list[RetrievalHit] = Field(default_factory=list)
-
-
-class VideoUploadResponse(BaseModel):
-    """Result returned after a video has been converted into knowledge nodes."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    success: bool
-    processed_nodes: int = Field(ge=0)
-    source: str
-    source_id: str | None = None
-    entity_count: int = Field(default=0, ge=0)
-    relation_count: int = Field(default=0, ge=0)
 
 
 class KnowledgeQueryRequest(BaseModel):
@@ -255,16 +245,23 @@ class KnowledgeQueryResponse(BaseModel):
 
 
 class KnowledgeUploadResponse(BaseModel):
-    """Result returned after an image or PDF is indexed as knowledge nodes."""
+    """Result of an upload: completed inline, deduplicated, or queued as a job."""
 
     model_config = ConfigDict(extra="forbid")
 
     success: bool
+    status: Literal["completed", "queued", "deduplicated"] = "completed"
     processed_nodes: int = Field(ge=0)
     source: str
     source_id: str | None = None
     entity_count: int = Field(default=0, ge=0)
     relation_count: int = Field(default=0, ge=0)
+    job_id: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class VideoUploadResponse(KnowledgeUploadResponse):
+    """Kept for API compatibility; identical to ``KnowledgeUploadResponse``."""
 
 
 class KnowledgeComparisonResponse(BaseModel):

@@ -92,3 +92,39 @@ def store() -> Iterator[FakeVectorStore]:
     reset_knowledge_vector_store(fake)  # type: ignore[arg-type]
     yield fake
     reset_knowledge_vector_store(None)
+
+
+@pytest.fixture(autouse=True)
+def _offline(monkeypatch, tmp_path):
+    """No test may reach a real provider or the repo's ./data directory."""
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.setenv("MEDIA_STORAGE_ROOT", str(tmp_path / "media"))
+    from app.services import gemini
+
+    gemini.reset_client()
+    yield
+    gemini.reset_client()
+
+
+class FakeGemini:
+    """Stands in for ``google.genai.Client``; ``responder(contents) -> dict``."""
+
+    def __init__(self, responder):
+        import json
+        from types import SimpleNamespace
+
+        outer = self
+        self.calls: list[list] = []
+
+        class _Models:
+            def generate_content(self, model, contents, config):
+                outer.calls.append(list(contents))
+                return SimpleNamespace(text=json.dumps(responder(contents)))
+
+        self.models = _Models()
+
+
+@pytest.fixture()
+def fake_gemini():
+    return FakeGemini

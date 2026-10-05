@@ -70,7 +70,7 @@ class NodeKind(str, Enum):
 class RelationType(str, Enum):
     """Edge vocabulary of the knowledge graph.
 
-    ``MENTIONS`` and ``NEXT`` are produced at ingestion time.  The remaining
+    ``MENTIONS``, ``NEXT`` and ``SPOKEN_BY`` are produced at ingestion time.  The remaining
     types are part of the schema contract and are produced by the
     cross-modal linking stage.
     """
@@ -82,6 +82,7 @@ class RelationType(str, Enum):
     CORROBORATES = "corroborates"  # segments in different sources stating the same fact
     SAME_AS = "same_as"  # entity <-> entity resolved as identical
     SUPERSEDES = "supersedes"  # later fact replaces an earlier one
+    SPOKEN_BY = "spoken_by"  # speech segment -> person/speaker entity
 
 
 class BoundingBox(BaseModel):
@@ -304,3 +305,34 @@ class KnowledgeStats(BaseModel):
     relations: int
     segments_by_modality: dict[str, int] = Field(default_factory=dict)
     relations_by_type: dict[str, int] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Background ingestion jobs
+# ---------------------------------------------------------------------------
+
+
+class JobStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class JobRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=new_id)
+    source_id: str
+    filename: str
+    modality: MediaModality
+    file_path: str
+    content_type: str | None = None
+    status: JobStatus = JobStatus.QUEUED
+    stage: str = "queued"
+    progress: float = Field(default=0.0, ge=0.0, le=1.0)
+    error: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    result: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_utc_now)
+    updated_at: datetime = Field(default_factory=_utc_now)

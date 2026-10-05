@@ -22,6 +22,8 @@ from typing import Any
 from app.schemas.knowledge import MediaModality
 from app.schemas.records import (
     BoundingBox,
+    JobRecord,
+    JobStatus,
     EntityRecord,
     EntitySummary,
     KnowledgeStats,
@@ -37,7 +39,7 @@ from app.schemas.records import (
 )
 from app.services.storage import storage_root
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -105,6 +107,24 @@ CREATE TABLE IF NOT EXISTS relations (
 );
 CREATE INDEX IF NOT EXISTS idx_relations_src ON relations(src_id, relation);
 CREATE INDEX IF NOT EXISTS idx_relations_dst ON relations(dst_id, relation);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id           TEXT PRIMARY KEY,
+    source_id    TEXT NOT NULL,
+    filename     TEXT NOT NULL,
+    modality     TEXT NOT NULL,
+    file_path    TEXT NOT NULL,
+    content_type TEXT,
+    status       TEXT NOT NULL,
+    stage        TEXT NOT NULL,
+    progress     REAL NOT NULL DEFAULT 0,
+    error        TEXT,
+    warnings     TEXT NOT NULL DEFAULT '[]',
+    result       TEXT NOT NULL DEFAULT '{}',
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
 """
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -436,7 +456,15 @@ class KnowledgeRepository:
                 "SELECT * FROM entities WHERE normalized_name = ?", (normalized,)
             )
             if row:
-                return self._row_to_entity(row)
+                existing = self._row_to_entity(row)
+                # A specific type ("person", "metric") beats the generic default.
+                if existing.entity_type == "concept" and entity_type != "concept":
+                    self._execute(
+                        "UPDATE entities SET entity_type = ? WHERE id = ?",
+                        (entity_type, existing.id),
+                    )
+                    existing.entity_type = entity_type
+                return existing
             entity = EntityRecord(
                 name=name.strip(), normalized_name=normalized, entity_type=entity_type
             )
@@ -603,6 +631,59 @@ class KnowledgeRepository:
             (self._row_to_relation(r), "out" if r["src_id"] == node_id else "in") for r in rows
         ]
 
+    # ------------------------------------------------------------------- jobs
+
+    def create_job(self, job: JobRecord) -> JobRecord:
+        self._execute(
+            """
+            INSERT INTO jobs (id, source_id, filename, modality, file_path, content_type, status,
+                              stage, progress, error, warnings, result, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job.id, job.source_id, job.filename, job.modality.value, job.file_path,
+                job.content_type, job.status.value, job.stage, job.progress, job.error,
+                json.dumps(job.warnings), _dumps(job.result),
+                _ts(job.created_at), _ts(job.updated_at),
+            ),
+        )
+        return job
+
+    def update_job(self, job_id: str, **fields: Any) -> None:
+        allowed = {"status", "stage", "progress", "error", "warnings", "result"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"Unknown job fields: {unknown}")
+        values: dict[str, Any] = {}
+        for key, value in fields.items():
+            if key == "status":
+                value = JobStatus(value).value
+            elif key == "warnings":
+                value = json.dumps(list(value))
+            elif key == "result":
+                value = _dumps(value)
+            values[key] = value
+        values["updated_at"] = _ts(datetime.now().astimezone())
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        self._execute(f"UPDATE jobs SET {assignments} WHERE id = ?", [*values.values(), job_id])
+
+    def get_job(self, job_id: str) -> JobRecord | None:
+        row = self._fetchone("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        return _row_to_job(row) if row else None
+
+    def list_jobs(
+        self, statuses: list[JobStatus] | None = None, limit: int = 50
+    ) -> list[JobRecord]:
+        if statuses:
+            marks = ",".join("?" * len(statuses))
+            rows = self._fetchall(
+                f"SELECT * FROM jobs WHERE status IN ({marks}) ORDER BY created_at LIMIT ?",
+                [*(s.value for s in statuses), limit],
+            )
+        else:
+            rows = self._fetchall("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
+        return [_row_to_job(r) for r in rows]
+
     # ------------------------------------------------------------------ stats
 
     def stats(self) -> KnowledgeStats:
@@ -630,6 +711,26 @@ class KnowledgeRepository:
             segments_by_modality=by_modality,
             relations_by_type=by_relation,
         )
+
+
+def _row_to_job(row: sqlite3.Row) -> JobRecord:
+    warnings = json.loads(row["warnings"] or "[]")
+    return JobRecord(
+        id=row["id"],
+        source_id=row["source_id"],
+        filename=row["filename"],
+        modality=MediaModality(row["modality"]),
+        file_path=row["file_path"],
+        content_type=row["content_type"],
+        status=JobStatus(row["status"]),
+        stage=row["stage"],
+        progress=row["progress"],
+        error=row["error"],
+        warnings=warnings if isinstance(warnings, list) else [],
+        result=_loads(row["result"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
 
 
 def _chunks(items: list[Any], size: int) -> Iterator[list[Any]]:

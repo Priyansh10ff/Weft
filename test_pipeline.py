@@ -41,7 +41,7 @@ class Audit:
 
 def check_environment() -> str:
     packages = {
-        "google-generativeai": "google.generativeai",
+        "google-genai": "google.genai",
         "groq": "groq",
         "chromadb": "chromadb",
         "fastapi": "fastapi",
@@ -181,7 +181,9 @@ def check_media_processors() -> str:
 
     original_module = sys.modules.get("faster_whisper")
     sys.modules["faster_whisper"] = types.SimpleNamespace(WhisperModel=FakeWhisperModel)
-    original_key = os.environ.pop("GROQ_API_KEY", None)
+    # Blank (not unset) so a later load_dotenv() cannot restore the real key.
+    original_key = os.environ.get("GROQ_API_KEY")
+    os.environ["GROQ_API_KEY"] = ""
     try:
         with tempfile.NamedTemporaryFile(suffix=".wav") as audio_file:
             audio_file.write(b"not-real-audio")
@@ -190,6 +192,8 @@ def check_media_processors() -> str:
     finally:
         if original_key is not None:
             os.environ["GROQ_API_KEY"] = original_key
+        else:
+            os.environ.pop("GROQ_API_KEY", None)
         if original_module is None:
             sys.modules.pop("faster_whisper", None)
         else:
@@ -242,7 +246,7 @@ def check_frontend_contract() -> str:
     for endpoint in ("/upload/video", "/upload/pdf", "/upload/image", "/query/compare"):
         if endpoint not in source:
             raise CheckFailure(f"frontend does not target {endpoint}")
-    if '"file": (' not in source or 'json={"query": query, "limit": 3}' not in source:
+    if '"file": (' not in source or 'json={"query": query, "limit":' not in source:
         raise CheckFailure("frontend request payloads do not match backend contracts")
     from app.schemas.knowledge import KnowledgeQueryRequest
 

@@ -1,11 +1,18 @@
-"""Gemini Flash Vision analysis for standalone images and PDF artifacts."""
+"""Gemini vision analysis for standalone images, video keyframes and PDF pages.
 
-import json
-import os
+Besides a description and the OCR text, the model returns text blocks and
+visual regions with bounding boxes, so evidence can later be traced to the
+exact part of an image, and typed entities so the graph knows a "person"
+from a "system" or a "metric".
+"""
+
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 
 from app.schemas.knowledge import KnowledgeNode, MediaModality
+from app.services import gemini
 from app.services.storage import storage_root
 
 
@@ -15,93 +22,124 @@ class ImageProcessingError(RuntimeError):
 
 _IMAGE_MEDIA_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 
-# gemini-1.5-flash and the whole Gemini 1.x family have been fully retired
-# by Google (requests now 404). gemini-2.5-flash is the current stable,
-# GA vision-capable model as of writing this.
-_GEMINI_MODEL = "gemini-3.6-flash"
+ENTITY_TYPES = (
+    "person",
+    "organization",
+    "system",
+    "component",
+    "metric",
+    "concept",
+    "product",
+    "location",
+    "event",
+)
+IMAGE_TYPES = ("diagram", "chart", "slide", "screenshot", "document", "photo", "table", "other")
+
+_PROMPT = f"""Analyze this image for a retrieval system that must answer questions
+about what it shows and trace answers back to exact regions.
+
+Return JSON with exactly these keys:
+- "image_type": one of {list(IMAGE_TYPES)}
+- "visual_summary": a detailed description of what is shown: diagram structure
+  and arrows, chart axes and trends, layout, and what the image communicates.
+- "ocr_text": all legible text, in reading order.
+- "text_blocks": up to 40 objects {{"text": str, "box_2d": [ymin, xmin, ymax, xmax]}}
+  for distinct blocks of legible text.
+- "regions": up to 15 objects {{"label": str, "description": str,
+  "box_2d": [ymin, xmin, ymax, xmax]}} for meaningful visual elements
+  (diagram components, charts, tables, UI panels, people).
+- "entities": objects {{"name": str, "type": one of {list(ENTITY_TYPES)}}} for named
+  people, organizations, systems, components, metrics, products and key concepts.
+
+box_2d coordinates are integers normalized to 0-1000 with the origin at the
+top-left. Use empty arrays when nothing applies. Do not invent text that is
+not legible."""
 
 
-def _gemini_client() -> Any:
-    """Build a Gen AI SDK client using ``GEMINI_API_KEY`` from .env.
-
-    Uses the ``google-genai`` package (``from google import genai``), which
-    is Google's current, supported SDK. The older ``google-generativeai``
-    package this project originally used is deprecated upstream.
-    """
+def _box(raw: Any) -> dict[str, float] | None:
+    """Gemini ``box_2d`` ([ymin, xmin, ymax, xmax] in 0-1000) -> normalized x/y/w/h."""
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
     try:
-        from dotenv import load_dotenv
-        from google import genai
-    except ImportError as exc:
-        raise ImageProcessingError(
-            "Gemini support requires google-genai and python-dotenv."
-        ) from exc
-    load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ImageProcessingError("GEMINI_API_KEY is not configured.")
-    try:
-        return genai.Client(api_key=api_key)
-    except Exception as exc:
-        raise ImageProcessingError("Unable to initialize the Gemini client.") from exc
+        ymin, xmin, ymax, xmax = (min(1000.0, max(0.0, float(v))) / 1000.0 for v in raw)
+    except (TypeError, ValueError):
+        return None
+    if ymax <= ymin or xmax <= xmin:
+        return None
+    return {"x": round(xmin, 4), "y": round(ymin, 4),
+            "width": round(xmax - xmin, 4), "height": round(ymax - ymin, 4)}
+
+
+def _typed_entities(raw: Any) -> tuple[list[str], dict[str, str]]:
+    names: list[str] = []
+    types: dict[str, str] = {}
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            kind = str(item.get("type") or "concept").strip().lower()
+        else:
+            name, kind = str(item).strip(), "concept"
+        if not name or name in types:
+            continue
+        names.append(name)
+        types[name] = kind if kind in ENTITY_TYPES else "concept"
+    return names, types
+
+
+def normalize_analysis(analysis: Any) -> dict[str, Any]:
+    """Validate and normalize a raw model response into the processor contract."""
+    if not isinstance(analysis, dict):
+        raise ImageProcessingError("Vision model returned a non-object response.")
+    blocks = []
+    for block in analysis.get("text_blocks") or []:
+        if isinstance(block, dict) and str(block.get("text") or "").strip():
+            blocks.append({"text": str(block["text"]).strip(), "box": _box(block.get("box_2d"))})
+    regions = []
+    for region in analysis.get("regions") or []:
+        if isinstance(region, dict) and str(region.get("label") or "").strip():
+            regions.append(
+                {
+                    "label": str(region["label"]).strip(),
+                    "description": str(region.get("description") or "").strip(),
+                    "box": _box(region.get("box_2d")),
+                }
+            )
+    names, types = _typed_entities(analysis.get("entities"))
+    image_type = str(analysis.get("image_type") or "other").strip().lower()
+    return {
+        "image_type": image_type if image_type in IMAGE_TYPES else "other",
+        "visual_summary": str(analysis.get("visual_summary") or "").strip(),
+        "ocr_text": str(analysis.get("ocr_text") or "").strip(),
+        "ocr_blocks": blocks,
+        "regions": regions,
+        "entities": names,
+        "entity_types": types,
+    }
 
 
 def analyze_image(image_path: Path, *, client: Any | None = None) -> dict[str, Any]:
-    """Return detailed visual summary, OCR text, and entities via Gemini Flash."""
+    """Describe an image: summary, OCR text and blocks, regions, typed entities."""
     if not image_path.is_file():
         raise ImageProcessingError(f"Image source does not exist: {image_path}")
     media_type = _IMAGE_MEDIA_TYPES.get(image_path.suffix.lower())
     if media_type is None:
         raise ImageProcessingError("Only PNG and JPEG images are supported.")
-
-    prompt = (
-        "Analyze this image for retrieval. Return JSON with exactly these keys: "
-        "visual_summary (detailed description of visual elements, diagrams and layout), "
-        "ocr_text (all legible text), and entities (an array of named people, products, "
-        "systems, or concepts)."
-    )
     try:
         from google.genai import types
 
-        active_client = client or _gemini_client()
-        response = active_client.models.generate_content(
-            model=_GEMINI_MODEL,
-            contents=[
-                prompt,
-                types.Part.from_bytes(data=image_path.read_bytes(), mime_type=media_type),
-            ],
-            config=types.GenerateContentConfig(response_mime_type="application/json"),
-        )
-        analysis = json.loads(response.text or "{}")
-    except ImageProcessingError:
-        # Already a clear, specific message (missing key, missing package,
-        # client init failure) -- don't swallow it into a generic one.
-        raise
-    except (OSError, json.JSONDecodeError, AttributeError) as exc:
-        raise ImageProcessingError(
-            f"Gemini vision analysis failed for {image_path.name}: {exc}"
-        ) from exc
-    except Exception as exc:  # Provider exceptions vary by installed SDK version.
-        raise ImageProcessingError(
-            f"Gemini vision analysis failed for {image_path.name}: {exc}"
-        ) from exc
-
-    entities = analysis.get("entities", [])
-    if not isinstance(entities, list):
-        entities = []
-    return {
-        "visual_summary": str(analysis.get("visual_summary", "")).strip(),
-        "ocr_text": str(analysis.get("ocr_text", "")).strip(),
-        "entities": [str(entity) for entity in entities if str(entity).strip()],
-    }
+        part = types.Part.from_bytes(data=image_path.read_bytes(), mime_type=media_type)
+        raw = gemini.generate_json([_PROMPT, part], client=client)
+    except gemini.GeminiError as exc:
+        raise ImageProcessingError(f"Vision analysis failed for {image_path.name}: {exc}") from exc
+    except ImportError as exc:
+        raise ImageProcessingError("google-genai is required for image analysis.") from exc
+    except OSError as exc:
+        raise ImageProcessingError(f"Unable to read {image_path.name}: {exc}") from exc
+    return normalize_analysis(raw)
 
 
-def _servable_frame_path(image_path: Path) -> str:
-    """Map a persisted upload path to the URL the /uploads mount serves it at.
-
-    Falls back to the bare filename if the path lives outside the storage
-    root (e.g. in tests), which keeps callers from crashing on an edge case
-    that never happens in the running service.
-    """
+def _servable_upload_path(image_path: Path) -> str:
+    """URL of a persisted upload under the ``/uploads`` static mount."""
     try:
         relative = image_path.resolve().relative_to(storage_root() / "uploads")
     except ValueError:
@@ -113,16 +151,19 @@ def process_image(file_path: str, *, client: Any | None = None) -> KnowledgeNode
     """Create one image knowledge node from a local PNG or JPEG upload."""
     image_path = Path(file_path)
     analysis = analyze_image(image_path, client=client)
-    ocr_text = analysis["ocr_text"]
     return KnowledgeNode(
-        # Both content AND transcript must be populated so every downstream
-        # consumer (text-only index, multimodal index, UI) can find the text.
-        content=ocr_text,
-        transcript=ocr_text,
-        visual_summary=analysis["visual_summary"],
+        content=analysis["ocr_text"],
+        transcript=analysis["ocr_text"],
+        visual_summary=analysis["visual_summary"] or None,
         modality=MediaModality.IMAGE,
         source=image_path.name,
-        frame_path=_servable_frame_path(image_path),
+        frame_path=_servable_upload_path(image_path),
         entities=analysis["entities"],
+        entity_types=analysis["entity_types"],
         provenance={"kind": "standalone_image"},
+        attributes={
+            "image_type": analysis["image_type"],
+            "ocr_blocks": analysis["ocr_blocks"],
+            "regions": analysis["regions"],
+        },
     )

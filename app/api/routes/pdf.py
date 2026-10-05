@@ -1,33 +1,24 @@
-"""PDF ingestion endpoint: one PAGE segment per page."""
+"""PDF ingestion: one page segment per page."""
 
-from anyio import to_thread
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Query, Response, UploadFile
 
-from app.api.routes._upload import acknowledge_upload, ingest_upload
+from app.api.routes._upload import handle_upload
 from app.schemas.knowledge import KnowledgeUploadResponse, MediaModality
-from app.services.pdf_processor import PdfProcessingError, process_pdf
-from app.services.storage import persist_upload
 
 router = APIRouter(prefix="/upload", tags=["uploads"])
 
+_BACKGROUND = Query(False, description="Return 202 immediately and process as a background job.")
+_FORCE = Query(False, description="Re-process even if identical bytes were already ingested.")
+
 
 @router.post("/pdf", response_model=KnowledgeUploadResponse)
-async def upload_pdf(file: UploadFile = File(...)) -> KnowledgeUploadResponse:
-    """Extract page text and visual artifacts from a PDF, then store every page."""
-    receipt = acknowledge_upload(file, MediaModality.PDF)
-    source_path = await persist_upload(file, receipt.source_asset.source_id)
-    try:
-        nodes = await to_thread.run_sync(process_pdf, str(source_path))
-    except PdfProcessingError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
-    result = await ingest_upload(receipt, nodes, source_path)
-    return KnowledgeUploadResponse(
-        success=True,
-        processed_nodes=len(result.segments),
-        source=result.source.filename,
-        source_id=result.source.id,
-        entity_count=result.entity_count,
-        relation_count=result.relation_count,
+async def upload_pdf(
+    response: Response,
+    file: UploadFile = File(...),
+    background: bool = _BACKGROUND,
+    force: bool = _FORCE,
+) -> KnowledgeUploadResponse:
+    """Upload a PDF; each page keeps its text layer plus a vision analysis of the rendered page."""
+    return await handle_upload(
+        file, MediaModality.PDF, response, background=background, force=force
     )

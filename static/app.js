@@ -120,7 +120,13 @@ async function uploadSource(file) {
       return;
     }
     const indexed = payload.indexed_count ?? payload.processed_nodes ?? 0;
-    logLine(`indexed ${indexed} knowledge node(s) from ${file.name}`, "ok");
+    if (payload.status === "deduplicated") {
+      logLine(`${file.name} was already ingested (${indexed} segment(s)); skipped`, "info");
+    } else {
+      const extra = payload.entity_count ? `, ${payload.entity_count} entities, ${payload.relation_count} relations` : "";
+      logLine(`indexed ${indexed} segment(s) from ${file.name}${extra}`, "ok");
+    }
+    (payload.warnings || []).forEach((warning) => logLine(`warning: ${warning}`, "info"));
   } catch (err) {
     logLine(`could not reach the backend: ${err.message}`, "err");
   } finally {

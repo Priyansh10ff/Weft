@@ -36,6 +36,7 @@ MANIFEST
 .env.*
 .env.local
 .env.production
+!.env.example
 *.pem
 *.key
 secrets.json
