@@ -93,9 +93,14 @@ def decompose(query: str) -> list[str]:
             merged.append(part)
     if len(merged) <= 1:
         return [query.strip()]
-    # Later parts often refer back with "it"/"that": carry the first part's topic.
+    # Later parts often refer back ("did *it* help?") or are too thin to stand
+    # alone ("what were the results?"): carry the first part's topic into them.
     topic = " ".join(tokens(merged[0])[:6])
-    return [merged[0]] + [f"{part} ({topic})" if re.search(r"\b(it|that|this|they|them)\b", part, re.I) else part for part in merged[1:]]
+    return [merged[0]] + [f"{part} ({topic})" if _needs_topic(part) else part for part in merged[1:]]
+
+
+def _needs_topic(part: str) -> bool:
+    return bool(re.search(r"\b(it|that|this|they|them)\b", part, re.I)) or len(tokens(part)) < 3
 
 
 def fts_query(text: str) -> str:
@@ -118,11 +123,13 @@ class Candidate:
     via: dict[str, Any] | None = None
 
 
-def _dense(store: VectorStore | None, query: str, limit: int) -> list[VectorHit]:
+def _dense(
+    store: VectorStore | None, query: str, limit: int, min_score: float | None = None
+) -> list[VectorHit]:
     if store is None:
         return []
     try:
-        return store.search(query, limit, max_per_source=limit)
+        return store.search(query, limit, min_score=min_score, max_per_source=limit)
     except (VectorStoreError, ValueError):
         return []
 
@@ -158,6 +165,7 @@ def search_one(
     store: VectorStore | None,
     hybrid: bool = True,
     candidates: int = CANDIDATES,
+    min_dense_score: float | None = None,
 ) -> dict[str, Candidate]:
     """Fuse dense, keyword and entity rankings for one (sub-)question."""
     pool: dict[str, Candidate] = {}
@@ -169,7 +177,7 @@ def search_one(
                 cand.ranks[kind] = rank
                 cand.rrf += WEIGHTS[kind] / (RRF_K + rank)
 
-    dense = _dense(store, query, candidates)
+    dense = _dense(store, query, candidates, min_dense_score)
     add("dense", [h.segment_id for h in dense])
     for hit in dense:
         pool[hit.segment_id].similarity = hit.similarity_score
@@ -249,6 +257,7 @@ def retrieve(
     expand: bool = True,
     decompose_query: bool = True,
     modalities: list[str] | None = None,
+    min_dense_score: float | None = None,
     vector_store: VectorStore | None = None,
     repository: KnowledgeRepository | None = None,
 ) -> RetrievalResult:
@@ -264,9 +273,12 @@ def retrieve(
         store = None
 
     subqueries = decompose(query) if decompose_query else [query]
-    runs = [search_one(query, repo=repo, store=store, hybrid=hybrid)]
+    runs = [search_one(query, repo=repo, store=store, hybrid=hybrid, min_dense_score=min_dense_score)]
     if len(subqueries) > 1:
-        runs += [search_one(q, repo=repo, store=store, hybrid=hybrid) for q in subqueries]
+        runs += [
+            search_one(q, repo=repo, store=store, hybrid=hybrid, min_dense_score=min_dense_score)
+            for q in subqueries
+        ]
 
     # Fuse across the full question and its sub-questions (RRF again, over
     # each run's own ordering), keeping the best signals seen for each hit.

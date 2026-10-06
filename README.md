@@ -112,13 +112,33 @@ A pair is linked when it shares at least two entities (after `same_as` resolutio
 
 `POST /query` runs `app/services/retrieval.py`:
 
-1. **Decompose** multi-part questions ("what was decided, who explained it, and where was the diagram shown?") into sub-questions; pronouns in later parts inherit the first part's topic.
+1. **Decompose** multi-part questions ("what was decided, who explained it, and where was the diagram shown?") into sub-questions; later parts that use a pronoun or are too thin to stand alone ("what were the results?") inherit the first part's topic.
 2. **Search three ways** per (sub-)question: dense embeddings over text + visual descriptions (Chroma), BM25 keyword search over text, visual descriptions, OCR, entity and speaker names (SQLite FTS5, catches exact identifiers like `max_retries=5` or `ticket #4471`), and entity matching (entities named in the question, including `same_as` variants).
 3. **Fuse** with reciprocal rank fusion, then fuse again across sub-questions.
 4. **Expand along the graph**: the top hits pull in `depicts`, `co_occurs`, `shows_same` and `corroborates` neighbours with a decayed score, recording which hit and relation brought them in.
 5. **Weight by extraction confidence**, keep at most three hits per source, and attach precise provenance: the best-matching sentence (own timestamp and speaker) inside a video window, and the matching OCR blocks (bounding boxes) on an image or page.
 
 Each result carries its `score`, per-retriever ranks (`signals`), `via` (graph link, if any), `matched_span` and `matched_regions`; the answer layer receives the same, so it can name speakers and say where something was shown. `hybrid`, `expand` and `decompose` can be switched off per request for comparisons; `modalities` filters results.
+
+## Evaluation
+
+`app/evaluation/` scores Weft against a text-only RAG baseline on a gold question set whose evidence is known in advance.
+
+- **Gold set** (`app/evaluation/datasets/demo.json`): 24 questions over the sample corpus, each listing the evidence an answer *requires* (source + page, time range, or record) and evidence that is *also relevant*. Types: `cross_modal` (needs speech + slide + chart), `multi_part`, `visual_only` (the answer is only on a slide or chart), `exact_identifier` (`max_retries=5`, `ticket #4471`) and `text`.
+- **Hard distractors** (`distractors.json`): look-alike sources (another postmortem with `max_retries=3`, an older onboarding spec, unrelated dashboards and tickets) so top-k is not trivially the whole corpus.
+- **Isolation**: every run builds a fresh temporary SQLite + Chroma corpus; your library is never touched.
+- **Systems** (an ablation, each adding one layer): text-only RAG (transcripts and page text only) → dense over text + visual descriptions → hybrid (dense + BM25 + entities) → full Weft (hybrid + decomposition + graph expansion).
+- **Metrics** at k: Recall@k (required evidence found), Complete@k (*all* required evidence found, the cross-modal bar), MRR, nDCG@k, precision@k, modality coverage, p50 latency; with `--answers`, answer term coverage for the baseline and Weft.
+
+```bash
+python -m app.evaluation run --k 5 --markdown EVALUATION.md   # writes data/eval/latest.json + a Markdown report
+python -m app.evaluation run --k 3 --systems text_rag weft
+python -m app.evaluation run --answers                         # also synthesizes answers (uses Gemini if configured)
+```
+
+The **Evaluate** page in the workspace runs the same thing and shows the system × metric table, Complete@k per question type, and, per question, which required evidence each system found or missed (and whether it came through a graph link). `GET /eval/latest` and `POST /eval/run` expose it over HTTP.
+
+Generate the numbers on your machine with the real embedding model (Chroma's MiniLM). Reports made with the test-only hashing embedding are labelled as proxies in the UI and should not be quoted.
 
 ## API Endpoints
 
@@ -132,6 +152,7 @@ Each result carries its `score`, per-retriever ranks (`signals`), `via` (graph l
 | `POST /query` | Hybrid, graph-expanded retrieval with a grounded answer; options `hybrid`, `expand`, `decompose`, `modalities`. |
 | `POST /query/compare` | Compare the top multimodal result with the top transcript-only baseline result. |
 | `GET /entities/{id}/timeline` | Every mention of an entity (and its aliases) ordered by `recorded_at` / upload time and position. |
+| `GET /eval/latest`, `POST /eval/run` | Latest evaluation report, or run the gold set (`{dataset, k, systems}`) against an isolated corpus. |
 | `GET /graph/{node_id}?depth=1` | Neighbourhood of a segment or entity: nodes and typed, weighted edges. |
 | `POST /graph/relink` | Recompute all cross-modal and temporal links. |
 | `GET /jobs`, `GET /jobs/{id}` | Background ingestion jobs: status, stage, progress, warnings, result. |
@@ -260,7 +281,6 @@ Then open:
 - **Temporal knowledge graphs:** connect people, concepts, frames, pages, and transcript segments as explicit time-aware relationships.
 - **Real-time streaming ingestion:** process live audio/video incrementally and make partial knowledge searchable before an upload completes.
 - **Custom chunking policies:** support modality-aware chunk boundaries, scene changes, speaker turns, page sections, and domain-specific document structure.
-- **Evaluation harness:** add curated benchmark queries and retrieval metrics to quantify multimodal gains across technical demos.
 
 ## Judge Demo Checklist
 

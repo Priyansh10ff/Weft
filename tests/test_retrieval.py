@@ -28,6 +28,12 @@ def test_decompose_problem_statement_question():
     assert len(decompose("How did the team fix the checkout timeout issue and how do we know it worked?")) == 2
 
 
+def test_decompose_carries_topic_into_thin_parts():
+    parts = decompose("What was the onboarding problem, what flow replaced it, and what were the results?")
+    assert len(parts) == 3
+    assert "onboarding" in parts[2]  # "what were the results" alone matches anything
+
+
 def test_fts_query_is_safe():
     assert fts_query('max_retries=5 "OR" (ticket #4471)') == '"max" OR "retries"* OR "ticket"* OR "4471"'
     assert fts_query("the and of") == ""

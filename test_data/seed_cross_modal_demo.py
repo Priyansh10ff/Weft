@@ -396,6 +396,8 @@ def _attach_sample_media(
 def seed_demo(
     repository: KnowledgeRepository | None = None,
     vector_store: VectorStore | None = None,
+    *,
+    attach_media: bool = True,
 ) -> list[IngestResult]:
     """Ingest the demo nodes as one source per (file, modality).
 
@@ -413,7 +415,9 @@ def seed_demo(
         if repo.get_source(str(source_id)) is not None:
             delete_source(str(source_id), repository=repo, vector_store=vector_store)
         asset = SourceAsset(source_id=source_id, filename=filename, modality=modality)
-        storage_path = _attach_sample_media(str(source_id), filename, modality, nodes)
+        storage_path = (
+            _attach_sample_media(str(source_id), filename, modality, nodes) if attach_media else None
+        )
         result = ingest_nodes(
             asset,
             nodes,

@@ -62,6 +62,8 @@ data/chroma/
 data/models/
 data/temp_frames/
 data/pdf_images/
+data/eval/
+_tmp/
 
 # Raw media files anywhere in the repo
 *.mp4

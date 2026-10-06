@@ -46,6 +46,8 @@ export const api = {
   query: (query, limit = 8, signal) => request("/query", { method: "POST", body: { query, limit }, signal }),
   compare: (query, limit = 8, signal) => request("/query/compare", { method: "POST", body: { query, limit }, signal }),
   seedDemo: () => request("/demo/seed", { method: "POST" }),
+  evalLatest: () => request("/eval/latest"),
+  evalRun: ({ dataset = "demo", k = 5, systems } = {}) => request("/eval/run", { method: "POST", body: { dataset, k, ...(systems ? { systems } : {}) } }),
 };
 
 export const UPLOAD_ROUTES = {

@@ -1,0 +1,40 @@
+{
+  "description": "Hard negatives: near-topic evidence from other incidents, meetings and documents (other services, other retry policies, an older onboarding plan). Mixed into the evaluation corpus so retrieval has to discriminate instead of returning half the corpus.",
+  "sources": [
+    {"filename": "platform-sync.mp4", "modality": "video", "nodes": [
+      {"transcript": "Search latency has been creeping up since the index rebuild last week.", "timestamp": "00:00 - 00:14", "entities": ["search service", "index rebuild"]},
+      {"transcript": "Here is the cache warming plan we agreed on.", "visual_summary": "A slide titled 'Cache warming' showing a cron job that preloads the top 1000 queries into Redis before peak hours.", "timestamp": "00:14 - 00:31", "entities": ["Redis", "cache warming", "search service"]},
+      {"transcript": "Kafka consumer lag spiked during the batch import.", "visual_summary": "A diagram of three Kafka partitions feeding two consumers, with a backlog arrow on partition 2.", "timestamp": "00:31 - 00:52", "entities": ["Kafka", "consumer lag"]}
+    ]},
+    {"filename": "standup-oct.mp3", "modality": "audio", "nodes": [
+      {"transcript": "The email worker now retries failed sends three times with a fixed delay.", "timestamp": "00:00 - 00:08", "entities": ["email worker"]},
+      {"transcript": "Copy for the onboarding welcome emails is ready for review.", "timestamp": "00:08 - 00:15", "entities": ["onboarding emails"]},
+      {"transcript": "Payments reconciliation job finished without errors last night.", "timestamp": "00:15 - 00:22", "entities": ["payments reconciliation"]}
+    ]},
+    {"filename": "search-latency-postmortem.pdf", "modality": "pdf", "nodes": [
+      {"content": "Summary: search p95 latency rose from 180ms to 900ms after the nightly index rebuild overlapped with peak traffic.", "timestamp": "Page 1", "entities": ["search service", "p95 latency"]},
+      {"content": "Root cause: the rebuild saturated the primary database; read traffic had no replica to fall back to.", "timestamp": "Page 2", "entities": ["primary database", "index rebuild"]},
+      {"content": "Remediation: add two read replicas, move the rebuild off-peak, and retry search reads with a fixed delay of 100ms, max_retries=3.", "visual_summary": "Page 3 with a table of remediation owners and dates.", "timestamp": "Page 3", "entities": ["read replicas", "search service"]}
+    ]},
+    {"filename": "kafka-dashboard.png", "modality": "image", "nodes": [
+      {"content": "consumer lag (orders topic) | peak: 12000 | now: 300", "visual_summary": "A dashboard screenshot of Kafka consumer lag for the orders topic: a tall spike during the batch import, then recovery to near zero after adding a consumer.", "entities": ["Kafka", "consumer lag", "orders topic"]}
+    ]},
+    {"filename": "support-tickets-q2.json", "modality": "json", "nodes": [
+      {"content": "Ticket #3810: Customer cannot log in after password reset; reset link expired immediately.", "timestamp": "ticket-3810", "entities": ["login", "password reset"]},
+      {"content": "Ticket #3922: Search results take several seconds to load in the evening.", "timestamp": "ticket-3922", "entities": ["search service"]},
+      {"content": "Ticket #4105: Invoice emails arrive twice for some customers.", "timestamp": "ticket-4105", "entities": ["invoice emails"]}
+    ]},
+    {"filename": "nps-survey.json", "modality": "json", "nodes": [
+      {"content": "Survey response #77: Would love a dark mode and fewer push notifications.", "timestamp": "response-77", "entities": ["dark mode", "notifications"]},
+      {"content": "Survey response #91: Checkout page feels cluttered on mobile.", "timestamp": "response-91", "entities": ["checkout page", "mobile"]}
+    ]},
+    {"filename": "mobile-onboarding-v1.pdf", "modality": "pdf", "nodes": [
+      {"content": "Proposal (v1): request location, notifications and contacts together on a single screen to keep onboarding short.", "visual_summary": "A mockup of one combined permissions screen with three toggles.", "timestamp": "Page 2", "entities": ["onboarding", "permissions"]},
+      {"content": "Targets: signup completion of 50% within the first session; measure weekly.", "timestamp": "Page 4", "entities": ["signup completion"]}
+    ]},
+    {"filename": "design-review-sept.mp4", "modality": "video", "nodes": [
+      {"transcript": "We settled on a softer illustration style for empty states.", "visual_summary": "A slide showing three empty-state illustrations in a pastel palette.", "timestamp": "00:00 - 00:18", "entities": ["illustrations", "empty states"]},
+      {"transcript": "The new color tokens are in the design system now.", "visual_summary": "A palette slide with primary, neutral and accent color swatches.", "timestamp": "00:18 - 00:35", "entities": ["design system", "color tokens"]}
+    ]}
+  ]
+}
