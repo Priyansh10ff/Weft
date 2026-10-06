@@ -86,7 +86,7 @@ function figure(src, attributes, terms) {
   return h("div", { class: "figure-wrap" }, frame, legend);
 }
 
-function mediaBlock(detail, terms) {
+function mediaBlock(detail, terms, at = null) {
   const { segment, media_url: mediaUrl } = detail;
   const loc = segment.locator || {};
   const attrs = segment.attributes || {};
@@ -97,7 +97,8 @@ function mediaBlock(detail, terms) {
     const media = h(tag, { src: mediaUrl, controls: true, preload: "metadata", class: `player ${tag}` });
     if (segment.modality === "video" && segment.frame_path) media.setAttribute("poster", segment.frame_path);
     media.addEventListener("loadedmetadata", () => {
-      if (loc.start_seconds != null) media.currentTime = loc.start_seconds;
+      const start = at ?? loc.start_seconds;
+      if (start != null) media.currentTime = start;
     }, { once: true });
     media.addEventListener("error", () => {
       const fallback = segment.frame_path
@@ -210,7 +211,7 @@ function relations(detail, onOpenSegment) {
   return { nav, speakers: groups.speakers, linked };
 }
 
-export async function openEvidence(segmentId, { query = "" } = {}) {
+export async function openEvidence(segmentId, { query = "", at = null } = {}) {
   ensureDrawer();
   const token = ++currentToken;
   if (drawer.hidden) lastFocus = document.activeElement;
@@ -234,7 +235,7 @@ export async function openEvidence(segmentId, { query = "" } = {}) {
 
   const { segment, source } = detail;
   const terms = queryTerms(query);
-  const { nodes: mediaNodes, media } = mediaBlock(detail, terms);
+  const { nodes: mediaNodes, media } = mediaBlock(detail, terms, at);
   const transcript = transcriptBlock(segment, media);
   const rel = relations(detail, (id) => openEvidence(id, { query }));
   const ocrText = segment.attributes?.ocr_text && segment.attributes.ocr_text !== segment.text ? segment.attributes.ocr_text : null;

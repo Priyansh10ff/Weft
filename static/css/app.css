@@ -343,3 +343,13 @@ video.player { max-height: 520px; }
   .link-card { grid-template-columns: 64px minmax(0, 1fr); }
   .link-conf { display: none; }
 }
+
+/* retrieval explanations */
+.ev-why { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.ev-why.via { color: var(--signal); }
+.ev-card.linked { border-style: dashed; }
+.loc-exact { color: var(--signal); }
+.speaker-inline { font: 500 11px/1 var(--mono); color: var(--signal); text-transform: uppercase; letter-spacing: 0.06em; }
+.chip-speaker { color: var(--signal); border-color: rgba(233, 180, 76, 0.35); }
+.subqs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 14px; font-size: 12.5px; }
+.strategy::before { content: "·"; margin-right: 12px; }

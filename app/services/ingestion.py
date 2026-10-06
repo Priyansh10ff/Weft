@@ -397,6 +397,8 @@ def ingest_nodes(
 
         repo.add_relations(relations)
 
+    repo.refresh_fts([s.id for s in segments])
+
     store = vector_store or get_knowledge_vector_store()
     try:
         store.index_segments(segments, {source.id: source})
@@ -452,6 +454,7 @@ def rebuild_index(
     total = 0
     for batch in repo.iter_all_segments():
         store.index_segments(batch, sources)
+        repo.refresh_fts([s.id for s in batch])
         total += len(batch)
     for source_id, source in sources.items():
         if source.status is not SourceStatus.INDEXED:

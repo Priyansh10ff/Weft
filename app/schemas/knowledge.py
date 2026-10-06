@@ -182,12 +182,49 @@ class QueryResponse(BaseModel):
 
 
 class KnowledgeQueryRequest(BaseModel):
-    """Semantic query accepted by the KnowledgeNode Chroma collection."""
+    """A question over the multimodal knowledge base, with retrieval switches."""
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(min_length=1)
+    query: str = Field(min_length=1, max_length=2000)
     limit: int = Field(default=5, ge=1, le=50)
+    hybrid: bool = Field(default=True, description="Fuse keyword (BM25) and entity matches with dense search.")
+    expand: bool = Field(default=True, description="Pull in evidence linked to the top hits in the graph.")
+    decompose: bool = Field(default=True, description="Split multi-part questions into sub-questions.")
+    modalities: list[MediaModality] | None = Field(default=None, description="Restrict results to these modalities.")
+
+
+class MatchedSpan(BaseModel):
+    """The sentence inside a longer segment that best matches the question."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_seconds: float | None = None
+    end_seconds: float | None = None
+    text: str | None = None
+    speaker: str | None = None
+    score: float = 0.0
+
+
+class MatchedRegion(BaseModel):
+    """An OCR block (normalized bounding box) that matches the question."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    box: dict[str, float]
+    score: float = 0.0
+
+
+class RetrievalVia(BaseModel):
+    """Why a hit was included although it did not match the question directly."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    relation: str
+    direction: str
+    from_segment_id: str
+    shared_entities: list[str] = Field(default_factory=list)
 
 
 class KnowledgeQueryResult(BaseModel):
@@ -208,6 +245,12 @@ class KnowledgeQueryResult(BaseModel):
     kind: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     entities: list[str] = Field(default_factory=list)
+    speakers: list[str] = Field(default_factory=list)
+    score: float | None = Field(default=None, ge=0.0, description="Final fused, confidence-weighted score.")
+    signals: dict[str, Any] = Field(default_factory=dict, description="Ranks per retriever and matched entities.")
+    via: RetrievalVia | None = None
+    matched_span: MatchedSpan | None = None
+    matched_regions: list[MatchedRegion] = Field(default_factory=list)
 
 
 class AnswerSource(BaseModel):
@@ -242,6 +285,8 @@ class KnowledgeQueryResponse(BaseModel):
     query: str
     results: list[KnowledgeQueryResult] = Field(default_factory=list)
     answer: SynthesizedAnswerModel | None = None
+    subqueries: list[str] = Field(default_factory=list)
+    strategy: dict[str, Any] = Field(default_factory=dict)
 
 
 class KnowledgeUploadResponse(BaseModel):

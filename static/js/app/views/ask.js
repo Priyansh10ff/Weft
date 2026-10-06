@@ -3,7 +3,7 @@
 
 import { api } from "../api.js";
 import { openEvidence } from "../evidence.js";
-import { h, clear, icon, modChip, meter, pct, thumb, truncate, skeletonLines, emptyState, toast, modalityLabel, fill, put } from "../ui.js";
+import { h, clear, icon, modChip, meter, pct, thumb, truncate, skeletonLines, emptyState, toast, modalityLabel, fmtClock, fill, put } from "../ui.js";
 import { navigate, store } from "../main.js";
 
 const EXAMPLES = [
@@ -36,10 +36,34 @@ function renderAnswerText(text, results, onCite) {
   return container;
 }
 
-function evidenceCard(hit, index, cited, query) {
-  const open = () => hit.segment_id && openEvidence(hit.segment_id, { query });
+const VIA_PHRASE = {
+  depicts: { out: "Linked: explained in", in: "Linked: shown in" },
+  corroborates: { out: "Linked: also stated in", in: "Linked: also stated in" },
+  co_occurs: { out: "Linked: same scene as", in: "Linked: same scene as" },
+  shows_same: { out: "Linked: same slide as", in: "Linked: same slide as" },
+};
+
+function whyLine(hit, indexOf) {
+  if (hit.via) {
+    const from = indexOf.get(hit.via.from_segment_id);
+    const phrase = VIA_PHRASE[hit.via.relation]?.[hit.via.direction === "out" ? "in" : "out"] || `Linked (${hit.via.relation})`;
+    const shared = hit.via.shared_entities?.length ? ` · shared: ${hit.via.shared_entities.slice(0, 3).join(", ")}` : "";
+    return h("p", { class: "ev-why via" }, icon("graph", 13), `${phrase} ${from != null ? `#${from + 1}` : "another hit"}${shared}`);
+  }
+  const s = hit.signals || {};
+  const parts = [];
+  if (s.dense_rank) parts.push("meaning");
+  if (s.keyword_rank) parts.push("keywords");
+  if (s.matched_entities?.length) parts.push(`entities: ${s.matched_entities.slice(0, 3).join(", ")}`);
+  return parts.length ? h("p", { class: "ev-why" }, `Matched on ${parts.join(" · ")}`) : null;
+}
+
+function evidenceCard(hit, index, cited, query, indexOf = new Map()) {
+  const span = hit.matched_span;
+  const at = span?.start_seconds ?? null;
+  const open = () => hit.segment_id && openEvidence(hit.segment_id, { query, at });
   const card = h("article", {
-    class: `ev-card mod-${hit.modality}${cited ? " cited" : ""}`, tabindex: "0", role: "button",
+    class: `ev-card mod-${hit.modality}${cited ? " cited" : ""}${hit.via ? " linked" : ""}`, tabindex: "0", role: "button",
     "aria-label": `Evidence ${index + 1}: ${hit.source || "unknown source"} ${hit.timestamp || ""}`,
     id: `ev-${index}`,
     onclick: open,
@@ -51,17 +75,33 @@ function evidenceCard(hit, index, cited, query) {
       h("span", { class: "ev-n" }, String(index + 1)),
       modChip(hit.modality),
       h("span", { class: "ev-source", title: hit.source || "" }, hit.source || "Unknown source"),
-      hit.timestamp ? h("span", { class: "loc" }, hit.timestamp) : null,
+      span?.start_seconds != null
+        ? h("span", { class: "loc loc-exact", title: `Window ${hit.timestamp || ""}` }, `at ${fmtClock(span.start_seconds)}`)
+        : hit.timestamp ? h("span", { class: "loc" }, hit.timestamp) : null,
     ),
-    hit.transcript ? h("p", { class: "ev-text" }, truncate(hit.transcript, 260)) : null,
-    hit.visual_summary ? h("p", { class: "ev-visual" }, h("span", { class: "faint" }, "Shown: "), truncate(hit.visual_summary, 200)) : null,
+    span?.text
+      ? h("p", { class: "ev-text" }, span.speaker ? h("span", { class: "speaker-inline" }, `${span.speaker}: `) : null, `“${truncate(span.text, 220)}”`)
+      : hit.transcript ? h("p", { class: "ev-text" }, truncate(hit.transcript, 260)) : null,
+    hit.matched_regions?.length
+      ? h("p", { class: "ev-visual" }, h("span", { class: "faint" }, "On screen: "), hit.matched_regions.map((r) => `“${truncate(r.text, 80)}”`).join("  "))
+      : hit.visual_summary ? h("p", { class: "ev-visual" }, h("span", { class: "faint" }, "Shown: "), truncate(hit.visual_summary, 200)) : null,
+    whyLine(hit, indexOf),
     h("div", { class: "ev-foot" },
-      h("span", { class: "num", title: "Similarity to your question" }, `match ${pct(hit.similarity_score)}`),
+      hit.score != null ? h("span", { class: "num", title: "Fused, confidence-weighted relevance" }, `score ${pct(Math.min(1, hit.score))}`) : h("span", { class: "num" }, `match ${pct(hit.similarity_score)}`),
       hit.confidence != null ? meter(hit.confidence) : null,
+      (hit.speakers || []).slice(0, 2).map((name) => h("span", { class: "chip chip-sm chip-speaker" }, name)),
       (hit.entities || []).slice(0, 4).map((name) => h("span", { class: "chip chip-sm" }, name)),
     ),
   ));
   return card;
+}
+
+function strategyNote(response) {
+  const st = response.strategy || {};
+  const bits = [st.hybrid ? "hybrid search" : "vector search"];
+  if (st.subqueries) bits.push(`${st.subqueries} sub-questions`);
+  if (st.expanded_hits) bits.push(`${st.expanded_hits} via graph links`);
+  return h("span", { class: "faint strategy" }, bits.join(" · "));
 }
 
 function compareColumn(title, subtitle, hit, query, accent) {
@@ -178,12 +218,13 @@ export function renderAsk(root, params) {
     const answer = response.answer;
     const citedSet = new Set((answer?.sources || []).filter((s) => s.cited).map((s) => s.evidence_index - 1));
     const modalities = [...new Set(results.map((r) => r.modality).filter(Boolean))];
+    const indexOf = new Map(results.map((r, i) => [r.segment_id, i]));
     const focusEvidence = (index) => {
       const card = out.querySelector(`#ev-${index}`);
       card?.scrollIntoView({ behavior: "smooth", block: "center" });
       card?.classList.add("flash");
       setTimeout(() => card?.classList.remove("flash"), 1200);
-      if (results[index]?.segment_id) openEvidence(results[index].segment_id, { query });
+      if (results[index]?.segment_id) openEvidence(results[index].segment_id, { query, at: results[index].matched_span?.start_seconds ?? null });
     };
 
     if (answer) {
@@ -192,9 +233,13 @@ export function renderAsk(root, params) {
         h("div", { class: "answer-meta" },
           h("span", { class: `badge ${answer.grounded ? "ok" : "warn"}` }, icon(answer.grounded ? "check" : "alert", 13), answer.grounded ? "Grounded in evidence" : "Not supported by evidence"),
           h("span", { class: "faint" }, method),
+          strategyNote(response),
           h("span", { class: "answer-mods" }, modalities.map((m) => h("span", { class: `mod mod-${m}`, title: modalityLabel(m) }, h("i", { class: "dot" })))),
         ),
         renderAnswerText(answer.answer, results, focusEvidence),
+        response.subqueries?.length
+          ? h("div", { class: "subqs" }, h("span", { class: "faint" }, "Answered in parts:"), response.subqueries.map((q) => h("span", { class: "chip chip-sm" }, truncate(q, 70))))
+          : null,
       ));
     }
 
@@ -214,7 +259,7 @@ export function renderAsk(root, params) {
       h("div", { class: "ev-head-row" },
         h("p", { class: "section-label" }, `Evidence · ${results.length} segment${results.length === 1 ? "" : "s"} from ${new Set(results.map((r) => r.source_id || r.source)).size} source${new Set(results.map((r) => r.source_id || r.source)).size === 1 ? "" : "s"}`),
       ),
-      h("div", { class: "ev-grid" }, results.map((hit, i) => evidenceCard(hit, i, citedSet.has(i), query))),
+      h("div", { class: "ev-grid" }, results.map((hit, i) => evidenceCard(hit, i, citedSet.has(i), query, indexOf))),
     );
   }
 

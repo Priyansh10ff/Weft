@@ -108,6 +108,18 @@ A pair is linked when it shares at least two entities (after `same_as` resolutio
 
 `python -m app.cli relink` (or `POST /graph/relink`) recomputes every link, e.g. after tuning thresholds.
 
+## Retrieval
+
+`POST /query` runs `app/services/retrieval.py`:
+
+1. **Decompose** multi-part questions ("what was decided, who explained it, and where was the diagram shown?") into sub-questions; pronouns in later parts inherit the first part's topic.
+2. **Search three ways** per (sub-)question: dense embeddings over text + visual descriptions (Chroma), BM25 keyword search over text, visual descriptions, OCR, entity and speaker names (SQLite FTS5, catches exact identifiers like `max_retries=5` or `ticket #4471`), and entity matching (entities named in the question, including `same_as` variants).
+3. **Fuse** with reciprocal rank fusion, then fuse again across sub-questions.
+4. **Expand along the graph**: the top hits pull in `depicts`, `co_occurs`, `shows_same` and `corroborates` neighbours with a decayed score, recording which hit and relation brought them in.
+5. **Weight by extraction confidence**, keep at most three hits per source, and attach precise provenance: the best-matching sentence (own timestamp and speaker) inside a video window, and the matching OCR blocks (bounding boxes) on an image or page.
+
+Each result carries its `score`, per-retriever ranks (`signals`), `via` (graph link, if any), `matched_span` and `matched_regions`; the answer layer receives the same, so it can name speakers and say where something was shown. `hybrid`, `expand` and `decompose` can be switched off per request for comparisons; `modalities` filters results.
+
 ## API Endpoints
 
 | Endpoint | Purpose |
@@ -117,7 +129,7 @@ A pair is linked when it shares at least two entities (after `same_as` resolutio
 | `POST /upload/image` | Upload a PNG/JPEG, generate a visual summary, OCR-style text extraction, entities, and index one image node. |
 | `POST /upload/pdf` | Upload a PDF, extract page text and embedded visual artifacts, and index one node per page. |
 | `POST /upload/json` | Upload a JSON file — a single object or an array of `{text/content, locator, source, entities}` records — and index one node per record. For structured data you already have (tickets, logs, metadata) that doesn't need OCR/ASR/vision. |
-| `POST /query` | Search the combined transcript/text + visual-summary multimodal index and get back a synthesized, cross-modal-grounded `answer` alongside the raw ranked results. |
+| `POST /query` | Hybrid, graph-expanded retrieval with a grounded answer; options `hybrid`, `expand`, `decompose`, `modalities`. |
 | `POST /query/compare` | Compare the top multimodal result with the top transcript-only baseline result. |
 | `GET /entities/{id}/timeline` | Every mention of an entity (and its aliases) ordered by `recorded_at` / upload time and position. |
 | `GET /graph/{node_id}?depth=1` | Neighbourhood of a segment or entity: nodes and typed, weighted edges. |

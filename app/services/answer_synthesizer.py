@@ -35,8 +35,22 @@ class SynthesizedAnswer:
     method: str = "llm"
 
 
+def _fmt_seconds(value: Any) -> str:
+    try:
+        total = max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return "?"
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
 def _evidence_block(hits: list[dict[str, Any]]) -> str:
-    """Render each hit as a numbered, modality-tagged evidence card."""
+    """Render each hit as a numbered, modality-tagged evidence card.
+
+    Besides text and visuals, a card carries who spoke, the exact sentence
+    that matched, the OCR text that matched, and, for evidence pulled in
+    through the graph, which card it is linked to and why.
+    """
+    index_of = {hit.get("id"): i for i, hit in enumerate(hits, start=1)}
     lines = []
     for i, hit in enumerate(hits, start=1):
         metadata = hit.get("metadata") or {}
@@ -46,10 +60,30 @@ def _evidence_block(hits: list[dict[str, Any]]) -> str:
         transcript = (hit.get("transcript") or metadata.get("transcript") or "").strip()
         visual = (metadata.get("visual_summary") or "").strip()
         parts = [f"[Evidence {i}] modality={modality} source={source} locator={locator}"]
+        if metadata.get("speakers"):
+            parts.append(f"  speakers: {', '.join(metadata['speakers'])}")
         if transcript:
-            parts.append(f"  text/transcript: {transcript}")
+            parts.append(f"  text/transcript: {transcript[:1500]}")
         if visual:
-            parts.append(f"  visual_summary: {visual}")
+            parts.append(f"  visual_summary: {visual[:1200]}")
+        span = hit.get("matched_span")
+        if span and span.get("text"):
+            who = f" ({span['speaker']})" if span.get("speaker") else ""
+            parts.append(
+                f"  best matching moment: {_fmt_seconds(span.get('start_seconds'))}"
+                f"-{_fmt_seconds(span.get('end_seconds'))}{who}: {span['text']}"
+            )
+        regions = hit.get("matched_regions") or []
+        if regions:
+            parts.append("  matching text on screen/page: " + " | ".join(r["text"] for r in regions))
+        via = hit.get("via")
+        if via:
+            linked = index_of.get(via.get("from_segment_id"))
+            target = f"Evidence {linked}" if linked else "another card"
+            shared = ", ".join(via.get("shared_entities") or [])
+            parts.append(
+                f"  linked to {target} by '{via.get('relation')}'" + (f" (shared: {shared})" if shared else "")
+            )
         lines.append("\n".join(parts))
     return "\n\n".join(lines)
 
@@ -82,9 +116,15 @@ def _fallback_answer(query: str, hits: list[dict[str, Any]]) -> SynthesizedAnswe
         transcript = (hit.get("transcript") or metadata.get("transcript") or "").strip()
         visual = (metadata.get("visual_summary") or "").strip()
 
+        span = hit.get("matched_span") or {}
+        if span.get("text"):
+            # Quote the sentence that matched, with its own timestamp.
+            locator = f"{_fmt_seconds(span.get('start_seconds'))}"
+            transcript = span["text"]
+        speakers = metadata.get("speakers") or []
         fragment_parts = []
         if transcript:
-            fragment_parts.append(transcript)
+            fragment_parts.append(transcript + (f" (said by {', '.join(speakers)})" if speakers else ""))
         if visual:
             fragment_parts.append(f"(shown visually: {visual})")
         if fragment_parts:
@@ -109,22 +149,13 @@ def _fallback_answer(query: str, hits: list[dict[str, Any]]) -> SynthesizedAnswe
 
 
 def _gemini_client() -> Any | None:
+    from app.services import gemini
+
     try:
-        from dotenv import load_dotenv
-        from google import genai
-    except ImportError:
-        return None
-    load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return None
-    try:
-        return genai.Client(api_key=api_key)
-    except Exception:
+        return gemini.get_client()
+    except gemini.GeminiError:
         return None
 
-
-_SYNTHESIS_MODEL = "gemini-2.5-flash"
 
 _SYSTEM_PROMPT = (
     "You are the answer layer of a multimodal retrieval system. You are given a user "
@@ -137,6 +168,10 @@ _SYSTEM_PROMPT = (
     "says a concept was explained and the visual_summary of a nearby card shows the diagram of "
     "that same concept, say so explicitly and cite both. Do not just restate one card in "
     "isolation if others corroborate or complete it.\n\n"
+    "Cards may name speakers, the exact matching moment inside a recording, matching text "
+    "on a screen or page, and links between cards (e.g. a diagram that 'depicts' what was "
+    "said). Use these to answer who/when/where parts precisely: name the speaker, give the "
+    "timestamp or page where something was shown.\n\n"
     "Rules:\n"
     "- Every factual claim must be traceable to at least one evidence card; cite cards inline "
     "like (Evidence 2).\n"
@@ -153,6 +188,7 @@ def synthesize_answer(
     hits: list[dict[str, Any]],
     *,
     client: Any | None = None,
+    subqueries: list[str] | None = None,
 ) -> SynthesizedAnswer:
     """Produce one grounded, cross-modal answer from retrieval hits.
 
@@ -167,20 +203,20 @@ def synthesize_answer(
         return _fallback_answer(query, hits)
 
     evidence_text = _evidence_block(hits)
-    prompt = f"Question: {query}\n\nEvidence:\n{evidence_text}\n\nRespond with the JSON object described in your instructions."
+    parts = ""
+    if subqueries:
+        parts = "The question has these parts; answer each:\n" + "\n".join(f"- {q}" for q in subqueries) + "\n\n"
+    prompt = (
+        f"Question: {query}\n\n{parts}Evidence:\n{evidence_text}\n\n"
+        "Respond with the JSON object described in your instructions."
+    )
 
     try:
-        from google.genai import types
+        from app.services import gemini
 
-        response = active_client.models.generate_content(
-            model=_SYNTHESIS_MODEL,
-            contents=[prompt],
-            config=types.GenerateContentConfig(
-                system_instruction=_SYSTEM_PROMPT,
-                response_mime_type="application/json",
-            ),
-        )
-        parsed = json.loads(response.text or "{}")
+        parsed = gemini.generate_json([prompt], system=_SYSTEM_PROMPT, client=active_client)
+        if not isinstance(parsed, dict):
+            return _fallback_answer(query, hits)
         answer_text = str(parsed.get("answer", "")).strip()
         if not answer_text:
             return _fallback_answer(query, hits)

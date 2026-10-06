@@ -39,7 +39,7 @@ from app.schemas.records import (
 )
 from app.services.storage import storage_root
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -125,6 +125,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
+
+-- Keyword index over everything a segment says or shows: text, visual
+-- summary, OCR text, entity and speaker names, source filename.
+CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
+    segment_id UNINDEXED,
+    body,
+    tokenize = 'unicode61 remove_diacritics 2'
+);
 """
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -185,6 +193,7 @@ class KnowledgeRepository:
         self._conn.execute("PRAGMA synchronous = NORMAL")
         self._tx_depth = 0
         self._migrate()
+        self._backfill_fts()
 
     # ------------------------------------------------------------------ infra
 
@@ -201,6 +210,14 @@ class KnowledgeRepository:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(SCHEMA_VERSION),),
             )
+
+    def _backfill_fts(self) -> None:
+        """Build the keyword index for databases created before it existed."""
+        segments = self._fetchone("SELECT COUNT(*) AS n FROM segments")
+        indexed = self._fetchone("SELECT COUNT(*) AS n FROM segments_fts")
+        if segments and indexed and segments["n"] and not indexed["n"]:
+            ids = [r["id"] for r in self._fetchall("SELECT id FROM segments")]
+            self.refresh_fts(ids)
 
     @contextmanager
     def transaction(self) -> Iterator["KnowledgeRepository"]:
@@ -324,6 +341,9 @@ class KnowledgeRepository:
                 for r in self._fetchall("SELECT id FROM segments WHERE source_id = ?", (source_id,))
             ]
             node_ids = [source_id, *segment_ids]
+            for chunk in _chunks(segment_ids, 500):
+                marks = ",".join("?" * len(chunk))
+                self._execute(f"DELETE FROM segments_fts WHERE segment_id IN ({marks})", chunk)
             for chunk in _chunks(node_ids, 500):
                 marks = ",".join("?" * len(chunk))
                 self._execute(
@@ -640,6 +660,68 @@ class KnowledgeRepository:
         return [
             (self._row_to_relation(r), "out" if r["src_id"] == node_id else "in") for r in rows
         ]
+
+    # ------------------------------------------------------------ keyword index
+
+    def refresh_fts(self, segment_ids: list[str]) -> None:
+        """(Re)build keyword-index rows for ``segment_ids``."""
+        if not segment_ids:
+            return
+        segments = self.get_segments(segment_ids)
+        mentions = self.entities_for_segments(list(segments))
+        speakers: dict[str, list[str]] = {}
+        filenames: dict[str, str] = {}
+        for chunk in _chunks(list(segments), 400):
+            marks = ",".join("?" * len(chunk))
+            for row in self._fetchall(
+                f"""
+                SELECT r.src_id AS segment_id, e.name AS name
+                FROM relations r JOIN entities e ON e.id = r.dst_id
+                WHERE r.relation = ? AND r.src_id IN ({marks})
+                """,
+                [RelationType.SPOKEN_BY.value, *chunk],
+            ):
+                speakers.setdefault(row["segment_id"], []).append(row["name"])
+        rows = []
+        for seg in segments.values():
+            if seg.source_id not in filenames:
+                src = self.get_source(seg.source_id)
+                filenames[seg.source_id] = src.filename if src else ""
+            parts = [
+                seg.text or "",
+                seg.visual_summary or "",
+                str(seg.attributes.get("ocr_text") or ""),
+                " ".join(e.name for e, _ in mentions.get(seg.id, [])),
+                " ".join(speakers.get(seg.id, [])),
+                filenames[seg.source_id],
+                seg.locator.label or "",
+            ]
+            rows.append((seg.id, "\n".join(p for p in parts if p)))
+        with self.transaction():
+            for chunk in _chunks(list(segments), 400):
+                marks = ",".join("?" * len(chunk))
+                self._execute(f"DELETE FROM segments_fts WHERE segment_id IN ({marks})", chunk)
+            with self._lock:
+                self._conn.executemany(
+                    "INSERT INTO segments_fts (segment_id, body) VALUES (?, ?)", rows
+                )
+
+    def keyword_search(self, match: str, limit: int = 50) -> list[tuple[str, float]]:
+        """BM25-ranked ``(segment_id, score)`` for an FTS5 MATCH expression.
+
+        Scores are positive, higher is better.
+        """
+        if not match.strip():
+            return []
+        try:
+            rows = self._fetchall(
+                "SELECT segment_id, bm25(segments_fts) AS rank FROM segments_fts "
+                "WHERE segments_fts MATCH ? ORDER BY rank LIMIT ?",
+                (match, limit),
+            )
+        except sqlite3.OperationalError:
+            return []  # malformed query: keyword search contributes nothing
+        return [(row["segment_id"], -float(row["rank"])) for row in rows]
 
     def delete_relations(
         self, relations: Iterable[RelationType], node_ids: list[str] | None = None

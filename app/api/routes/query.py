@@ -127,6 +127,12 @@ def _to_query_result(hit: dict[str, Any]) -> KnowledgeQueryResult:
         kind=metadata.get("kind"),
         confidence=metadata.get("confidence"),
         entities=list(metadata.get("entities") or []),
+        speakers=list(metadata.get("speakers") or []),
+        score=hit.get("score"),
+        signals=hit.get("signals") or {},
+        via=hit.get("via"),
+        matched_span=hit.get("matched_span"),
+        matched_regions=hit.get("matched_regions") or [],
     )
 
 
@@ -134,9 +140,17 @@ def _to_query_result(hit: dict[str, Any]) -> KnowledgeQueryResult:
 async def query_knowledge(request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
     """Search the segment index and synthesize a grounded answer from hydrated evidence."""
     try:
-        hits = await to_thread.run_sync(
-            lambda: retrieval.search(request.query, request.limit)
+        result = await to_thread.run_sync(
+            lambda: retrieval.retrieve(
+                request.query,
+                request.limit,
+                hybrid=request.hybrid,
+                expand=request.expand,
+                decompose_query=request.decompose,
+                modalities=[m.value for m in request.modalities] if request.modalities else None,
+            )
         )
+        hits = result.hits
     except VectorStoreError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
@@ -151,10 +165,14 @@ async def query_knowledge(request: KnowledgeQueryRequest) -> KnowledgeQueryRespo
     # cross-modal evidence (transcript + visual_summary + page text) into a
     # single answer, rather than stopping at "convert media to text, then
     # vector search".
-    synthesized = await to_thread.run_sync(lambda: synthesize_answer(request.query, hits))
+    synthesized = await to_thread.run_sync(
+        lambda: synthesize_answer(request.query, hits, subqueries=result.subqueries)
+    )
 
     return KnowledgeQueryResponse(
         query=request.query,
+        subqueries=result.subqueries,
+        strategy=result.strategy,
         results=[_to_query_result(hit) for hit in hits],
         answer=SynthesizedAnswerModel(
             answer=synthesized.answer,
@@ -171,7 +189,7 @@ async def compare_query(request: KnowledgeQueryRequest) -> KnowledgeComparisonRe
     try:
         multimodal_hits, baseline_hits = await to_thread.run_sync(
             lambda: (
-                retrieval.search(request.query, request.limit),
+                retrieval.retrieve(request.query, request.limit).hits,
                 retrieval.search(request.query, request.limit, text_only=True),
             )
         )
