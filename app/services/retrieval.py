@@ -47,6 +47,15 @@ EXPANSION_DECAY = {
 }
 MAX_PER_SOURCE = 3
 CANDIDATES = 30
+# Sub-questions refine the full question rather than outvote it: together they
+# carry this share of one vote.
+SUBQUERY_SHARE = 0.5
+# A sub-question's best hit is reserved a slot only if it also ranks in the
+# full question's top COVERAGE_POOL candidates (keeps decoys out).
+COVERAGE_POOL = 12
+# Link reinforcement: a candidate linked to a top seed gains this fraction of
+# the seed's decayed score.
+LINK_BOOST = 0.05
 
 _STOPWORDS = {
     "a", "about", "after", "again", "all", "also", "an", "and", "any", "are", "as", "at", "be",
@@ -96,11 +105,8 @@ def decompose(query: str) -> list[str]:
     # Later parts often refer back ("did *it* help?") or are too thin to stand
     # alone ("what were the results?"): carry the first part's topic into them.
     topic = " ".join(tokens(merged[0])[:6])
-    return [merged[0]] + [f"{part} ({topic})" if _needs_topic(part) else part for part in merged[1:]]
-
-
-def _needs_topic(part: str) -> bool:
-    return bool(re.search(r"\b(it|that|this|they|them)\b", part, re.I)) or len(tokens(part)) < 3
+    head = set(tokens(merged[0]))
+    return [merged[0]] + [part if head & set(tokens(part)) else f"{part} ({topic})" for part in merged[1:]]
 
 
 def fts_query(text: str) -> str:
@@ -121,6 +127,7 @@ class Candidate:
     matched_entities: set[str] = field(default_factory=set)
     rrf: float = 0.0
     via: dict[str, Any] | None = None
+    boosts: list[str] = field(default_factory=list)
 
 
 def _dense(
@@ -193,6 +200,15 @@ def search_one(
         for sid in ordered:
             pool[sid].matched_entities |= entity[sid]
     return pool
+
+
+def _via(relation: Any, direction: str, seed: str) -> dict[str, Any]:
+    return {
+        "relation": relation.relation.value,
+        "direction": direction,
+        "from_segment_id": seed,
+        "shared_entities": relation.attributes.get("shared_entities") or [],
+    }
 
 
 def _rrf_max(kinds: int) -> float:
@@ -283,11 +299,13 @@ def retrieve(
     # Fuse across the full question and its sub-questions (RRF again, over
     # each run's own ordering), keeping the best signals seen for each hit.
     fused: dict[str, Candidate] = {}
-    for run in runs:
+    sub_weight = SUBQUERY_SHARE / max(1, len(runs) - 1)
+    for i, run in enumerate(runs):
+        weight = 1.0 if i == 0 else sub_weight
         ordered = sorted(run.values(), key=lambda c: c.rrf, reverse=True)
         for rank, cand in enumerate(ordered, start=1):
             merged = fused.setdefault(cand.segment_id, Candidate(cand.segment_id))
-            merged.rrf += 1.0 / (RRF_K + rank) * (cand.rrf / _rrf_max(3))
+            merged.rrf += weight / (RRF_K + rank) * (cand.rrf / _rrf_max(3))
             for kind, r in cand.ranks.items():
                 merged.ranks[kind] = min(r, merged.ranks.get(kind, r))
             if cand.similarity is not None:
@@ -309,6 +327,7 @@ def retrieve(
     expanded = 0
     if expand and scores:
         seeds = sorted(scores, key=scores.get, reverse=True)[:EXPANSION_SEEDS]
+        seed_set = set(seeds)
         for seed in seeds:
             for relation, direction in repo.relations_for(seed):
                 decay = EXPANSION_DECAY.get(relation.relation)
@@ -323,7 +342,16 @@ def retrieve(
                     if modalities and found.modality.value not in set(modalities):
                         continue
                     segments[other] = found
-                if score <= scores.get(other, 0.0):
+                if other in scores:
+                    # Already a candidate: corroboration from a top hit in another
+                    # modality lifts it instead of being ignored. Seeds keep
+                    # their own order; only the tail is lifted.
+                    lift = 0.0 if other in seed_set else LINK_BOOST * score
+                    if lift > 0:
+                        scores[other] += lift
+                        fused[other].boosts.append(relation.relation.value)
+                        if not fused[other].ranks and fused[other].via is None:
+                            fused[other].via = _via(relation, direction, seed)
                     continue
                 # A direct hit reachable through a link gets reinforced; a
                 # segment found *only* through the graph records why.
@@ -332,27 +360,40 @@ def retrieve(
                     fused[other] = Candidate(other)
                     expanded += 1
                 if not direct:
-                    fused[other].via = {
-                        "relation": relation.relation.value,
-                        "direction": direction,
-                        "from_segment_id": seed,
-                        "shared_entities": relation.attributes.get("shared_entities") or [],
-                    }
+                    fused[other].via = _via(relation, direction, seed)
                 scores[other] = score
 
     # Confidence weighting + per-source diversity.
     final = {sid: scores[sid] * (0.6 + 0.4 * segments[sid].confidence) for sid in scores}
     ordered = sorted(final, key=final.get, reverse=True)
+    cap = MAX_PER_SOURCE if limit > 5 else 2
     picked: list[str] = []
     per_source: dict[str, int] = defaultdict(int)
-    for sid in ordered:
+
+    def take(sid: str) -> bool:
         src = segments[sid].source_id
-        if per_source[src] >= MAX_PER_SOURCE:
-            continue
+        if sid in picked or sid not in final or per_source[src] >= cap:
+            return False
         per_source[src] += 1
         picked.append(sid)
+        return True
+
+    # Coverage: each part of a multi-part question gets its best hit a slot,
+    # provided the full question also ranks it (a decoy that only matches a
+    # thin sub-question does not qualify).
+    if len(runs) > 1 and COVERAGE_POOL:
+        pool = set(sorted(runs[0], key=lambda sid: runs[0][sid].rrf, reverse=True)[:COVERAGE_POOL])
+        for run in runs[1:]:
+            if len(picked) >= limit - 1:
+                break
+            for cand in sorted(run.values(), key=lambda c: c.rrf, reverse=True)[:3]:
+                if cand.segment_id in pool and (cand.segment_id in picked or take(cand.segment_id)):
+                    break
+    for sid in ordered:
         if len(picked) >= limit:
             break
+        take(sid)
+    picked.sort(key=final.get, reverse=True)
 
     terms = set(tokens(query))
     hits = hydrate_segments(
@@ -367,6 +408,7 @@ def retrieve(
                     "entity_rank": fused[sid].ranks.get("entity"),
                     "keyword_score": fused[sid].keyword_score,
                     "matched_entities": sorted(fused[sid].matched_entities),
+                    "link_boosts": sorted(set(fused[sid].boosts)),
                 },
                 "via": fused[sid].via,
                 "similarity_score": fused[sid].similarity or 0.0,
