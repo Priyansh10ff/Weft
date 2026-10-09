@@ -50,7 +50,7 @@ cp .env.example .env                   # Windows: copy .env.example .env
 uvicorn main:app --reload
 ```
 
-Open [http://127.0.0.1:8000/app](http://127.0.0.1:8000/app) and choose **Load sample data**, then ask: *How did the team fix the checkout timeout issue, and how do we know it worked?*
+Open [http://127.0.0.1:8000/app](http://127.0.0.1:8000/app) and choose **Load sample data**, or start the guided tour from the landing page. Then ask: *How did the team fix the checkout timeout issue, and how do we know it worked?*
 
 The first start downloads the MiniLM embedding model (about 80 MB).
 
@@ -69,7 +69,7 @@ The sidebar in the workspace and `GET /health` show which providers are active. 
 
 **Website.** `/` is the landing page. `/app` is the workspace:
 
-- **Ask:** a question, an answer with citations, ranked evidence and a comparison with text-only RAG
+- **Ask:** a question, the evidence as soon as it is found, the answer as it is written with citations, and a comparison with text-only RAG
 - **Library:** upload files and follow their jobs
 - **Entities:** every mention of a thing across files, over time
 - **Graph:** the whole knowledge base as linked evidence and entities, or one node's neighbourhood

@@ -1,10 +1,11 @@
 // Ask: one question across every modality, a grounded answer with citations,
 // and the evidence behind it. Optional side-by-side with text-only RAG.
 
-import { api } from "../api.js";
+import { api, queryStream } from "../api.js";
 import { openEvidence } from "../evidence.js";
 import { h, clear, icon, modChip, meter, pct, thumb, truncate, skeletonLines, emptyState, toast, modalityLabel, fmtClock, fill, put } from "../ui.js";
 import { navigate, store } from "../main.js";
+import { startTour } from "../tour.js";
 
 const EXAMPLES = [
   "How did the team fix the checkout timeout issue, and how do we know it worked?",
@@ -161,7 +162,10 @@ export function renderAsk(root, params) {
             h("a", { class: "btn", href: "#/library" }, icon("upload", 14), "Upload"),
           ))
         : null,
-      h("p", { class: "section-label" }, "Try asking"),
+      h("div", { class: "section-row intro-row" },
+        h("p", { class: "section-label" }, "Try asking"),
+        h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: () => startTour({ navigate, store }) }, icon("spark", 14), "Take the tour"),
+      ),
       examples,
     );
   }
@@ -186,24 +190,35 @@ export function renderAsk(root, params) {
     controller?.abort();
     controller = new AbortController();
     const { signal } = controller;
-    const withCompare = compare.checked;
+    const comparison = compare.checked
+      ? api.compare(query, 8, signal).catch((error) => { if (error.name !== "AbortError") toast(`Comparison failed: ${error.message}`, "err"); return null; })
+      : null;
     fill(out, h("div", { class: "card answer-card" }, skeletonLines(4)), h("div", { class: "ev-grid" }, [0, 1, 2].map(() => h("div", { class: "ev-card skeleton-card" }, h("div", { class: "skeleton thumb" }), skeletonLines(3)))));
     submit.disabled = true;
+    let view = null;
     try {
-      const [response, comparison] = await Promise.all([
-        api.query(query, 8, signal),
-        withCompare ? api.compare(query, 8, signal) : Promise.resolve(null),
-      ]);
-      renderResults(query, response, comparison);
+      await queryStream(query, {
+        limit: 8,
+        signal,
+        onRetrieval: (head) => {
+          view = renderResults(query, head);
+          comparison?.then((result) => { if (result && !signal.aborted) view?.setComparison(result); });
+        },
+        onDelta: (text) => view?.appendDelta(text),
+        onAnswer: (answer) => view?.setAnswer(answer),
+      });
     } catch (error) {
       if (error.name === "AbortError") return;
-      fill(out, emptyState({ title: "The question couldn't be answered", body: error.message }));
+      if (view) view.failAnswer(error.message);
+      else fill(out, emptyState({ title: "The question couldn't be answered", body: error.message }));
     } finally {
-      submit.disabled = false;
+      if (!signal.aborted) submit.disabled = false;
     }
   }
 
-  function renderResults(query, response, comparison) {
+  // Lays out the evidence as soon as retrieval returns, and gives the caller
+  // hooks to fill in the answer as it streams and the comparison when ready.
+  function renderResults(query, response) {
     const results = response.results || [];
     clear(out);
     if (!results.length) {
@@ -212,11 +227,9 @@ export function renderAsk(root, params) {
         body: store.stats?.segments ? "Nothing in your library was close enough to this question. Try rephrasing, or upload sources that cover it." : "Your library is empty. Upload sources or load the sample data first.",
         action: store.stats?.segments ? null : h("a", { class: "btn", href: "#/library" }, "Go to Library"),
       }));
-      return;
+      return null;
     }
 
-    const answer = response.answer;
-    const citedSet = new Set((answer?.sources || []).filter((s) => s.cited).map((s) => s.evidence_index - 1));
     const modalities = [...new Set(results.map((r) => r.modality).filter(Boolean))];
     const indexOf = new Map(results.map((r, i) => [r.segment_id, i]));
     const focusEvidence = (index) => {
@@ -226,41 +239,66 @@ export function renderAsk(root, params) {
       setTimeout(() => card?.classList.remove("flash"), 1200);
       if (results[index]?.segment_id) openEvidence(results[index].segment_id, { query, at: results[index].matched_span?.start_seconds ?? null });
     };
+    const mods = h("span", { class: "answer-mods" }, modalities.map((m) => h("span", { class: `mod mod-${m}`, title: modalityLabel(m) }, h("i", { class: "dot" }))));
+    const subqs = response.subqueries?.length
+      ? h("div", { class: "subqs" }, h("span", { class: "faint" }, "Answered in parts:"), response.subqueries.map((q) => h("span", { class: "chip chip-sm" }, truncate(q, 70))))
+      : null;
+    const meta = (badge, method) => h("div", { class: "answer-meta" }, badge, method ? h("span", { class: "faint" }, method) : null, strategyNote(response), mods);
 
-    if (answer) {
-      const method = answer.method === "llm" ? "Synthesized by Gemini" : "Extractive summary (no LLM key configured)";
-      put(out, h("section", { class: "card answer-card" },
-        h("div", { class: "answer-meta" },
-          h("span", { class: `badge ${answer.grounded ? "ok" : "warn"}` }, icon(answer.grounded ? "check" : "alert", 13), answer.grounded ? "Grounded in evidence" : "Not supported by evidence"),
-          h("span", { class: "faint" }, method),
-          strategyNote(response),
-          h("span", { class: "answer-mods" }, modalities.map((m) => h("span", { class: `mod mod-${m}`, title: modalityLabel(m) }, h("i", { class: "dot" })))),
-        ),
-        renderAnswerText(answer.answer, results, focusEvidence),
-        response.subqueries?.length
-          ? h("div", { class: "subqs" }, h("span", { class: "faint" }, "Answered in parts:"), response.subqueries.map((q) => h("span", { class: "chip chip-sm" }, truncate(q, 70))))
-          : null,
-      ));
-    }
+    const answerHost = h("section", { class: "card answer-card", "aria-busy": "true" },
+      meta(h("span", { class: "badge" }, h("span", { class: "spinner", "aria-hidden": "true" }), "Writing answer"), null),
+      skeletonLines(2),
+    );
+    const compareHost = h("div", { class: "cmp-host" });
+    const cards = results.map((hit, i) => evidenceCard(hit, i, false, query, indexOf));
+    let streamed = null;
 
-    if (comparison) {
-      const same = comparison.multimodal_result?.segment_id && comparison.multimodal_result.segment_id === comparison.text_only_baseline_result?.segment_id;
-      put(out, h("section", { class: "cmp" },
-        h("p", { class: "section-label" }, "Top match: Weft vs text-only RAG"),
-        h("div", { class: "cmp-grid" },
-          compareColumn("Weft", "Speech, text and visual descriptions", comparison.multimodal_result, query, true),
-          compareColumn("Text-only baseline", "Transcript and document text only", comparison.text_only_baseline_result, query, false),
-        ),
-        same ? h("p", { class: "cmp-note" }, "Both found the same top segment for this question. The difference shows on questions about what was on screen.") : null,
-      ));
-    }
-
-    put(out, 
+    put(out,
+      answerHost,
+      compareHost,
       h("div", { class: "ev-head-row" },
         h("p", { class: "section-label" }, `Evidence · ${results.length} segment${results.length === 1 ? "" : "s"} from ${new Set(results.map((r) => r.source_id || r.source)).size} source${new Set(results.map((r) => r.source_id || r.source)).size === 1 ? "" : "s"}`),
       ),
-      h("div", { class: "ev-grid" }, results.map((hit, i) => evidenceCard(hit, i, citedSet.has(i), query, indexOf))),
+      h("div", { class: "ev-grid" }, cards),
     );
+
+    return {
+      appendDelta(text) {
+        if (!streamed) {
+          streamed = h("p", { class: "answer-text streaming" });
+          fill(answerHost, meta(h("span", { class: "badge" }, h("span", { class: "spinner", "aria-hidden": "true" }), "Writing answer"), "Gemini"), streamed);
+        }
+        streamed.append(text);
+      },
+      setAnswer(answer) {
+        const cited = new Set((answer.sources || []).filter((s) => s.cited).map((s) => s.evidence_index - 1));
+        cards.forEach((card, i) => card.classList.toggle("cited", cited.has(i)));
+        const method = answer.method === "llm" ? "Synthesized by Gemini" : "Extractive summary (no LLM key configured)";
+        answerHost.removeAttribute("aria-busy");
+        fill(answerHost,
+          meta(h("span", { class: `badge ${answer.grounded ? "ok" : "warn"}` }, icon(answer.grounded ? "check" : "alert", 13), answer.grounded ? "Grounded in evidence" : "Not supported by evidence"), method),
+          renderAnswerText(answer.answer, results, focusEvidence),
+          subqs,
+        );
+      },
+      failAnswer(message) {
+        answerHost.removeAttribute("aria-busy");
+        fill(answerHost, meta(h("span", { class: "badge warn" }, icon("alert", 13), "Answer failed"), null),
+          streamed ? h("p", { class: "answer-text" }, streamed.textContent) : null,
+          h("p", { class: "muted" }, `${message} The evidence below is still valid.`));
+      },
+      setComparison(comparison) {
+        const same = comparison.multimodal_result?.segment_id && comparison.multimodal_result.segment_id === comparison.text_only_baseline_result?.segment_id;
+        fill(compareHost, h("section", { class: "cmp" },
+          h("p", { class: "section-label" }, "Top match: Weft vs text-only RAG"),
+          h("div", { class: "cmp-grid" },
+            compareColumn("Weft", "Speech, text and visual descriptions", comparison.multimodal_result, query, true),
+            compareColumn("Text-only baseline", "Transcript and document text only", comparison.text_only_baseline_result, query, false),
+          ),
+          same ? h("p", { class: "cmp-note" }, "Both found the same top segment for this question. The difference shows on questions about what was on screen.") : null,
+        ));
+      },
+    };
   }
 
   form.addEventListener("submit", (event) => {

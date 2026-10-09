@@ -2,8 +2,8 @@
 
 This does NOT call Whisper/Gemini and needs no API keys -- it feeds
 `KnowledgeNode` records through the same ingestion path the upload API uses
-(SQLite records + Chroma index), so `uvicorn main:app` (or
-`test_pipeline.py`) can query them immediately.
+(SQLite records + Chroma index), so the API and `python -m app.evaluation`
+can query them immediately.
 
 The scenario is designed so that no single modality alone answers the demo
 question -- the evidence is deliberately split:

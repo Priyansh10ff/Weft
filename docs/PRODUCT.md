@@ -75,7 +75,8 @@ Weft is not a hosted SaaS, a video editor, a general chatbot or a replacement fo
 - Graph of the whole knowledge base, or of one piece of evidence and everything linked to it
 - Evidence drawer that plays video from the cited second and shows the cited page or image region
 - Side-by-side comparison with a text-only baseline for any question
-- One-click sample data
+- One-click sample data and a four-step guided tour
+- Answers stream in as they are written, after the evidence appears
 
 **Evaluation**
 - 24 questions with known evidence, plus look-alike decoy files

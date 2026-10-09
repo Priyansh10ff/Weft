@@ -96,6 +96,8 @@ Weft ingests every format into one evidence store with exact locations, links re
 
 **Q5. The answer cites its evidence** with numbered references and says plainly when the evidence does not support an answer. Without a Gemini key, an extractive summary is returned.
 
+**Q5a. As a user, I see the evidence as soon as it is found** and the answer appears as it is written, with citations linked once it is complete.
+
 **Q6. As a user, I can compare** Weft's results with a text-only baseline for the same question.
 
 **Q7. As a user, I can open any citation** at its location: video from the cited second, PDF at the page, image with the region highlighted.
@@ -132,9 +134,9 @@ Weft ingests every format into one evidence store with exact locations, links re
 | FR18 | Text-only baseline comparison endpoint | Must | Done |
 | FR19 | Gold-set evaluation: CLI, API and Evaluate page | Must | Done |
 | FR20 | Website: landing, Ask, Library, source view, Entities, Graph, Evaluate | Must | Done |
-| FR21 | Sample data loader | Should | Done |
+| FR21 | Sample data loader and a guided tour (Ask, Evidence, Graph, Evaluate) | Should | Done |
 | FR22 | Interactive graph view: whole corpus and a node's neighbourhood | Should | Done |
-| FR23 | Streaming answers | Could | **Open** (v0.3) |
+| FR23 | Streaming answers (evidence first, then the answer as it is written) | Could | Done |
 | FR24 | Docker image and CI pipeline | Should | **Open** (v0.3) |
 | FR25 | API authentication for shared deployments | Could | Open (later) |
 | FR26 | Evaluation on a user's own corpus with their own gold set | Could | Open (later) |
@@ -171,7 +173,7 @@ Measured on the bundled gold set with the MiniLM embedding model, top 5.
 | Version | Scope |
 |---|---|
 | **v0.2 (current)** | Everything marked Done above |
-| **v0.3** | Streaming answers (FR23), Docker image and CI (FR24), cross-modal retrieval on a par with hybrid |
+| **v0.3** | Docker image and CI (FR24), cross-modal retrieval on a par with hybrid |
 | **Later** | API authentication (FR25), evaluation on user corpora (FR26), larger embedding models, a second gold set from real recordings |
 
 ## 10. Risks and open questions

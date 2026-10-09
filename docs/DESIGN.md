@@ -137,6 +137,8 @@ All icons are inline SVG on a 16 px grid with 1.5 px strokes, drawn with `curren
 | Server down | The sidebar status reads "Server unreachable" |
 | Providers off | The sidebar shows which of vision, transcription, speakers and entities are on |
 | Background work | Upload rows show stage and progress until the job finishes |
+| Answer streaming | Evidence renders first. The answer card shows a "Writing answer" badge with a spinner and an amber caret after the last word, then turns into the grounded badge and linked citations |
+| Tour | A card in the bottom corner with the step, one action button and Back / Next. It moves to the left while the evidence drawer is open |
 
 ## 9. Accessibility
 

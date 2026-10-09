@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -202,14 +204,7 @@ def synthesize_answer(
     if active_client is None:
         return _fallback_answer(query, hits)
 
-    evidence_text = _evidence_block(hits)
-    parts = ""
-    if subqueries:
-        parts = "The question has these parts; answer each:\n" + "\n".join(f"- {q}" for q in subqueries) + "\n\n"
-    prompt = (
-        f"Question: {query}\n\n{parts}Evidence:\n{evidence_text}\n\n"
-        "Respond with the JSON object described in your instructions."
-    )
+    prompt = _prompt(query, hits, subqueries) + "\n\nRespond with the JSON object described in your instructions."
 
     try:
         from app.services import gemini
@@ -223,26 +218,98 @@ def synthesize_answer(
         cited = parsed.get("cited_evidence") or []
         cited_indices = {int(c) for c in cited if isinstance(c, (int, float, str)) and str(c).strip().lstrip("-").isdigit()}
 
-        sources = []
-        for i, hit in enumerate(hits, start=1):
-            metadata = hit.get("metadata") or {}
-            sources.append(
-                {
-                    "evidence_index": i,
-                    "cited": i in cited_indices if cited_indices else True,
-                    "modality": metadata.get("modality") or "unknown",
-                    "source": hit.get("source") or metadata.get("source") or "unknown source",
-                    "locator": hit.get("timestamp") or metadata.get("timestamp") or "n/a",
-                    "similarity_score": hit.get("similarity_score"),
-                }
-            )
-
         return SynthesizedAnswer(
             answer=answer_text,
             grounded=bool(parsed.get("grounded", True)),
-            sources=sources,
+            sources=_sources(hits, cited_indices),
             method="llm",
         )
     except Exception:
         # Any provider/parse failure -> never break the query endpoint.
         return _fallback_answer(query, hits)
+
+
+def _prompt(query: str, hits: list[dict[str, Any]], subqueries: list[str] | None) -> str:
+    parts = ""
+    if subqueries:
+        parts = "The question has these parts; answer each:\n" + "\n".join(f"- {q}" for q in subqueries) + "\n\n"
+    return f"Question: {query}\n\n{parts}Evidence:\n{_evidence_block(hits)}"
+
+
+def _sources(hits: list[dict[str, Any]], cited_indices: set[int]) -> list[dict[str, Any]]:
+    sources = []
+    for i, hit in enumerate(hits, start=1):
+        metadata = hit.get("metadata") or {}
+        sources.append(
+            {
+                "evidence_index": i,
+                "cited": i in cited_indices if cited_indices else True,
+                "modality": metadata.get("modality") or "unknown",
+                "source": hit.get("source") or metadata.get("source") or "unknown source",
+                "locator": hit.get("timestamp") or metadata.get("timestamp") or "n/a",
+                "similarity_score": hit.get("similarity_score"),
+            }
+        )
+    return sources
+
+
+_NOT_ANSWERED = "The evidence does not answer this"
+_STREAM_PROMPT = _SYSTEM_PROMPT.rsplit("- Return strict JSON", 1)[0] + (
+    "- Write plain prose with no JSON, headings or lists, citing cards inline like (Evidence 2).\n"
+    f"- If the evidence does not answer the question, begin with \"{_NOT_ANSWERED}\" and say what is missing."
+)
+_CITED = re.compile(r"Evidence\s*(\d+)", re.IGNORECASE)
+
+
+def stream_answer(
+    query: str,
+    hits: list[dict[str, Any]],
+    *,
+    client: Any | None = None,
+    subqueries: list[str] | None = None,
+) -> Iterator[tuple[str, Any]]:
+    """Yield ``("delta", text)`` chunks as Gemini writes, then ``("answer", SynthesizedAnswer)``.
+
+    Without a client, or if the stream fails before producing text, the one
+    final ``answer`` event carries the same result ``synthesize_answer`` would.
+    A stream that breaks midway keeps the text written so far.
+    """
+    if not hits:
+        yield "answer", _fallback_answer(query, hits)
+        return
+    active_client = client or _gemini_client()
+    if active_client is None:
+        yield "answer", _fallback_answer(query, hits)
+        return
+
+    pieces: list[str] = []
+    try:
+        from google.genai import types
+
+        from app.config import get_settings
+
+        config = types.GenerateContentConfig(system_instruction=_STREAM_PROMPT, temperature=0.1)
+        stream = active_client.models.generate_content_stream(
+            model=get_settings().gemini_model, contents=[_prompt(query, hits, subqueries)], config=config
+        )
+        for chunk in stream:
+            text = getattr(chunk, "text", None)
+            if text:
+                pieces.append(text)
+                yield "delta", text
+    except Exception:
+        if not pieces:
+            yield "answer", synthesize_answer(query, hits, client=active_client, subqueries=subqueries)
+            return
+
+    answer_text = "".join(pieces).strip()
+    if not answer_text:
+        yield "answer", _fallback_answer(query, hits)
+        return
+    cited = {int(n) for n in _CITED.findall(answer_text) if 1 <= int(n) <= len(hits)}
+    yield "answer", SynthesizedAnswer(
+        answer=answer_text,
+        grounded=bool(cited) and not answer_text.startswith(_NOT_ANSWERED),
+        sources=_sources(hits, cited),
+        method="llm",
+    )

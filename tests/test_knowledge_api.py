@@ -119,3 +119,72 @@ def test_demo_seed_is_idempotent_and_can_be_disabled(client, monkeypatch):
     assert client.get("/stats").json()["sources"] == first["sources"]
     monkeypatch.setenv("ENABLE_DEMO", "false")
     assert client.post("/demo/seed").status_code == 403
+
+
+def _sse_events(text: str) -> list[tuple[str, dict]]:
+    events = []
+    for block in text.strip().split("\n\n"):
+        lines = dict(line.split(": ", 1) for line in block.splitlines() if ": " in line)
+        events.append((lines["event"], json.loads(lines["data"])))
+    return events
+
+
+def test_query_stream_sends_evidence_then_answer_offline(client):
+    _upload_tickets(client)
+    response = client.post("/query/stream", json={"query": "checkout backoff fix", "limit": 3})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _sse_events(response.text)
+    assert [e[0] for e in events] == ["retrieval", "answer", "done"]
+    head = events[0][1]
+    assert head["results"][0]["timestamp"] == "ticket-2"
+    assert events[1][1]["method"] == "fallback-extractive"
+    assert client.post("/query/stream", json={"query": " "}).status_code == 422
+
+
+def test_stream_answer_yields_deltas_and_parses_citations():
+    from app.services.answer_synthesizer import stream_answer
+
+    class Chunk:
+        def __init__(self, text):
+            self.text = text
+
+    class Models:
+        def generate_content_stream(self, **kwargs):
+            assert "Evidence 1" in kwargs["contents"][0]
+            yield Chunk("The fix was exponential backoff (Evidence 2), ")
+            yield Chunk("confirmed by the dashboard (Evidence 1).")
+
+    class Client:
+        models = Models()
+
+    hits = [
+        {"source": "grafana.png", "timestamp": None, "metadata": {"modality": "image", "visual_summary": "p99 drops"}},
+        {"source": "review.mp4", "timestamp": "00:12 - 00:25", "metadata": {"modality": "video"}, "transcript": "We added backoff"},
+        {"source": "ticket.json", "timestamp": "t-1", "metadata": {"modality": "json"}, "transcript": "Checkout slow"},
+    ]
+    events = list(stream_answer("How was it fixed?", hits, client=Client()))
+    assert [kind for kind, _ in events] == ["delta", "delta", "answer"]
+    answer = events[-1][1]
+    assert answer.method == "llm" and answer.grounded
+    assert answer.answer.endswith("(Evidence 1).")
+    assert [s["cited"] for s in answer.sources] == [True, True, False]
+
+
+def test_stream_answer_falls_back_when_stream_fails_early():
+    from app.services.answer_synthesizer import stream_answer
+
+    class Models:
+        def generate_content_stream(self, **kwargs):
+            raise RuntimeError("network down")
+
+        def generate_content(self, **kwargs):
+            raise RuntimeError("network down")
+
+    class Client:
+        models = Models()
+
+    hits = [{"source": "a.json", "timestamp": "r1", "metadata": {"modality": "json"}, "transcript": "Backoff fixed it"}]
+    events = list(stream_answer("What fixed it?", hits, client=Client()))
+    assert len(events) == 1 and events[0][0] == "answer"
+    assert events[0][1].method == "fallback-extractive"

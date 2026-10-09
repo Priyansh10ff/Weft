@@ -51,6 +51,57 @@ export const api = {
   evalRun: ({ dataset = "demo", k = 5, systems } = {}) => request("/eval/run", { method: "POST", body: { dataset, k, ...(systems ? { systems } : {}) } }),
 };
 
+/**
+ * POST /query/stream and dispatch its server-sent events:
+ * onRetrieval(head), onDelta(text), onAnswer(answer). Resolves when the stream ends.
+ */
+export async function queryStream(query, { limit = 8, signal, onRetrieval, onDelta, onAnswer } = {}) {
+  let response;
+  try {
+    response = await fetch("/query/stream", {
+      method: "POST", signal,
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify({ query, limit }),
+    });
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    throw new Error("Can't reach the Weft server. Is it running?");
+  }
+  if (!response.ok || !response.body) {
+    let detail = null;
+    try { detail = (await response.json()).detail; } catch { /* not JSON */ }
+    const error = new Error(typeof detail === "string" ? detail : `Request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const dispatch = (block) => {
+    let event = "message", data = "";
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event: ")) event = line.slice(7);
+      else if (line.startsWith("data: ")) data += line.slice(6);
+    }
+    const payload = data ? JSON.parse(data) : {};
+    if (event === "retrieval") onRetrieval?.(payload);
+    else if (event === "delta") onDelta?.(payload.text || "");
+    else if (event === "answer") onAnswer?.(payload);
+    else if (event === "error") throw new Error(payload.detail || "The answer failed.");
+  };
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf("\n\n")) !== -1) {
+      dispatch(buffer.slice(0, cut));
+      buffer = buffer.slice(cut + 2);
+    }
+  }
+  if (buffer.trim()) dispatch(buffer);
+}
+
 export const UPLOAD_ROUTES = {
   ".mp4": "video",
   ".mp3": "audio", ".wav": "audio", ".m4a": "audio", ".aac": "audio", ".flac": "audio", ".ogg": "audio",

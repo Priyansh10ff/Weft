@@ -5,8 +5,11 @@ import logging
 import re
 from typing import Any
 
+from collections.abc import Iterator
+
 from anyio import to_thread
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 
 from app.schemas.knowledge import (
     AnswerSource,
@@ -17,7 +20,7 @@ from app.schemas.knowledge import (
     SynthesizedAnswerModel,
 )
 from app.services import retrieval
-from app.services.answer_synthesizer import synthesize_answer
+from app.services.answer_synthesizer import SynthesizedAnswer, stream_answer, synthesize_answer
 from app.services.vector_store import VectorStoreError
 
 _log = logging.getLogger(__name__)
@@ -136,11 +139,9 @@ def _to_query_result(hit: dict[str, Any]) -> KnowledgeQueryResult:
     )
 
 
-@router.post("/query", response_model=KnowledgeQueryResponse)
-async def query_knowledge(request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-    """Search the segment index and synthesize a grounded answer from hydrated evidence."""
+async def _retrieve(request: KnowledgeQueryRequest) -> retrieval.RetrievalResult:
     try:
-        result = await to_thread.run_sync(
+        return await to_thread.run_sync(
             lambda: retrieval.retrieve(
                 request.query,
                 request.limit,
@@ -150,15 +151,34 @@ async def query_knowledge(request: KnowledgeQueryRequest) -> KnowledgeQueryRespo
                 modalities=[m.value for m in request.modalities] if request.modalities else None,
             )
         )
-        hits = result.hits
     except VectorStoreError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=422, detail=str(exc)
         ) from exc
+
+
+def _answer_model(synthesized: SynthesizedAnswer) -> SynthesizedAnswerModel:
+    return SynthesizedAnswerModel(
+        answer=synthesized.answer,
+        grounded=synthesized.grounded,
+        method=synthesized.method,
+        sources=[AnswerSource(**s) for s in synthesized.sources],
+    )
+
+
+def _sse(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+@router.post("/query", response_model=KnowledgeQueryResponse)
+async def query_knowledge(request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
+    """Search the segment index and synthesize a grounded answer from hydrated evidence."""
+    result = await _retrieve(request)
+    hits = result.hits
 
     # Synthesize one grounded answer from the retrieved evidence instead of
     # leaving the caller to eyeball raw hits. This is what actually connects
@@ -174,12 +194,43 @@ async def query_knowledge(request: KnowledgeQueryRequest) -> KnowledgeQueryRespo
         subqueries=result.subqueries,
         strategy=result.strategy,
         results=[_to_query_result(hit) for hit in hits],
-        answer=SynthesizedAnswerModel(
-            answer=synthesized.answer,
-            grounded=synthesized.grounded,
-            method=synthesized.method,
-            sources=[AnswerSource(**s) for s in synthesized.sources],
-        ),
+        answer=_answer_model(synthesized),
+    )
+
+
+@router.post("/query/stream")
+async def query_stream(request: KnowledgeQueryRequest) -> StreamingResponse:
+    """Same as ``/query``, as server-sent events: the evidence first, then the answer as it is written.
+
+    Events: ``retrieval`` (query, subqueries, strategy, results), any number of
+    ``delta`` (``{"text": ...}``), one ``answer`` (the final answer with its
+    sources), and ``done``. A failure after retrieval is sent as ``error``.
+    """
+    result = await _retrieve(request)
+    head = {
+        "query": request.query,
+        "subqueries": result.subqueries,
+        "strategy": result.strategy,
+        "results": [_to_query_result(hit).model_dump(mode="json") for hit in result.hits],
+    }
+
+    def events() -> Iterator[str]:
+        yield _sse("retrieval", head)
+        try:
+            for kind, payload in stream_answer(request.query, result.hits, subqueries=result.subqueries):
+                if kind == "delta":
+                    yield _sse("delta", {"text": payload})
+                else:
+                    yield _sse("answer", _answer_model(payload).model_dump(mode="json"))
+        except Exception as exc:  # pragma: no cover - stream_answer already degrades
+            _log.exception("Answer stream failed")
+            yield _sse("error", {"detail": str(exc)})
+        yield _sse("done", {})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -199,7 +250,7 @@ async def compare_query(request: KnowledgeQueryRequest) -> KnowledgeComparisonRe
         ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=422, detail=str(exc)
         ) from exc
 
     return KnowledgeComparisonResponse(

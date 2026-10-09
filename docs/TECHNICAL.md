@@ -139,6 +139,7 @@ Weft/
 │           ├── api.js              API client, uploads with progress
 │           ├── ui.js               DOM helpers and small components
 │           ├── evidence.js         Evidence drawer
+│           ├── tour.js             Guided tour over the sample data
 │           └── views/              ask, library, source, entities, graph, evaluate
 │
 ├── test_data/
@@ -152,7 +153,7 @@ Weft/
 | Path | Page |
 |---|---|
 | `/` | Landing page |
-| `/app#/ask` | Ask: question, answer with citations, ranked evidence, baseline comparison |
+| `/app#/ask` | Ask: question, answer streamed with citations, ranked evidence, baseline comparison. `?tour=1` starts the guided tour |
 | `/app#/library` | Library: uploads with job progress, sources, sample data |
 | `/app#/sources/{id}` | One source and its segments in order |
 | `/app#/entities`, `/app#/entities/{id}` | Entities, and one entity's mentions and timeline |
@@ -296,7 +297,9 @@ The text-only baseline (`search_text_only`) uses the `segments_text_only` collec
 
 ## 8. Answers (`services/answer_synthesizer.py`)
 
-The top hits are formatted as numbered evidence blocks (source, modality, locator, speaker, text, what was shown, matched span) and sent to Gemini with the sub-questions. The model must cite evidence by number and say when the evidence does not support an answer. Without a key, or if the call fails, an extractive summary of the top evidence is returned with `method: "extractive"`, and `answer.sources` still lists each cited piece.
+The top hits are formatted as numbered evidence blocks (source, modality, locator, speaker, text, what was shown, matched span) and sent to Gemini with the sub-questions. The model must cite evidence by number and say when the evidence does not support an answer. Without a key, or if the call fails, an extractive summary of the top evidence is returned with `method: "fallback-extractive"`, and `answer.sources` still lists each cited piece.
+
+`stream_answer` is the streaming variant used by `POST /query/stream` and the Ask page. It asks Gemini for plain prose with inline `(Evidence N)` citations and yields each chunk as it arrives, then a final answer whose cited sources are parsed from the text. If the stream fails before any text, it falls back to `synthesize_answer`. If it fails midway, the text written so far is kept.
 
 ## 9. Evaluation (`app/evaluation/`)
 
@@ -349,6 +352,7 @@ Query parameters on every upload: `background` (return 202 with a job), `force` 
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/query` | `{ query, limit, hybrid, expand, decompose, modalities }` → answer, hits with explanations, sub-questions, strategy |
+| POST | `/query/stream` | Same request as `/query`, answered as server-sent events: `retrieval` (query, sub-questions, strategy, results), `delta` (`{text}`, repeated), `answer` (final answer and sources), `done`. A failure after retrieval is sent as `error` |
 | POST | `/query/compare` | Weft results next to the text-only baseline for the same question |
 
 ### Knowledge
@@ -436,7 +440,7 @@ Open `http://127.0.0.1:8000/app` and choose **Load sample data** in the Library,
   - `test_upload_jobs`: uploads, deduplication, size limit, background jobs and resume
   - `test_linker`: each link type, thresholds, `same_as`, timelines, neighbourhood and overview graph API
   - `test_retrieval`: decomposition, fusion, exact identifiers, expansion, spans and regions
-  - `test_knowledge_api`: every knowledge endpoint
+  - `test_knowledge_api`: every knowledge endpoint, the answer stream (offline, with a fake Gemini stream, and a failing one)
   - `test_evaluation`: evidence matching, metrics, dataset validity, end-to-end ranking, the eval API
 - **Retrieval changes** are checked with `python -m app.evaluation run` at k = 3 and k = 5 with the real embedding model before they are kept.
 

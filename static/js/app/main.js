@@ -9,6 +9,7 @@ import { renderSource } from "./views/source.js";
 import { renderEntities, renderEntity } from "./views/entities.js";
 import { renderEvaluate } from "./views/evaluate.js";
 import { renderGraph } from "./views/graph.js";
+import { startTour } from "./tour.js";
 
 export const store = {
   stats: null,
@@ -69,6 +70,13 @@ function route() {
   if (!match) {
     view.append(h("div", { class: "empty" }, h("h3", {}, "Page not found"), h("a", { class: "btn", href: "#/ask" }, "Go to Ask")));
     return;
+  }
+  if (params.get("tour") === "1") {
+    // #/ask?tour=1 (from the landing page) starts the tour once, then drops the flag.
+    params.delete("tour");
+    const qs = params.toString();
+    history.replaceState(null, "", `#${path}${qs ? `?${qs}` : ""}`);
+    startTour({ navigate, store });
   }
   const [pattern, nav, render, title] = match;
   const args = path.match(pattern).slice(1).map(decodeURIComponent);
