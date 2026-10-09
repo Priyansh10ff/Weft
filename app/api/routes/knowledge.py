@@ -26,7 +26,7 @@ from app.schemas.records import (
     SourceRecord,
     SourceSummary,
 )
-from app.services.graph import entity_timeline, neighbourhood, segment_label
+from app.services.graph import entity_timeline, neighbourhood, overview, segment_label
 from app.services.ingestion import delete_source
 from app.services.vector_store import VectorStoreError
 
@@ -193,6 +193,18 @@ async def get_entity_timeline(entity_id: str) -> EntityTimeline:
     if timeline is None:
         raise _not_found("Entity", entity_id)
     return timeline
+
+
+@router.get("/graph", response_model=GraphView, tags=["knowledge"])
+async def get_graph_overview(
+    entities: bool = Query(default=True, description="Include entities that connect several sources."),
+    min_sources: int = Query(default=2, ge=1, le=20, description="Only entities seen in at least this many sources."),
+    limit: int = Query(default=400, ge=1, le=1000),
+) -> GraphView:
+    """The whole knowledge base: linked segments and the entities that tie sources together."""
+    return await to_thread.run_sync(
+        lambda: overview(get_repository(), entities=entities, min_sources=min_sources, limit=limit)
+    )
 
 
 @router.get("/graph/{node_id}", response_model=GraphView, tags=["knowledge"])

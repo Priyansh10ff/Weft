@@ -8,6 +8,7 @@ import { renderLibrary } from "./views/library.js";
 import { renderSource } from "./views/source.js";
 import { renderEntities, renderEntity } from "./views/entities.js";
 import { renderEvaluate } from "./views/evaluate.js";
+import { renderGraph } from "./views/graph.js";
 
 export const store = {
   stats: null,
@@ -28,6 +29,8 @@ const ROUTES = [
   [/^\/sources\/([^/]+)$/, "library", renderSource, "Source"],
   [/^\/entities$/, "entities", renderEntities, "Entities"],
   [/^\/entities\/([^/]+)$/, "entities", renderEntity, "Entity"],
+  [/^\/graph$/, "graph", renderGraph, "Graph"],
+  [/^\/graph\/([^/]+)$/, "graph", renderGraph, "Graph"],
   [/^\/evaluate$/, "evaluate", renderEvaluate, "Evaluation"],
 ];
 

@@ -661,6 +661,17 @@ class KnowledgeRepository:
             (self._row_to_relation(r), "out" if r["src_id"] == node_id else "in") for r in rows
         ]
 
+    def list_relations(self, relations: list[RelationType]) -> list[RelationRecord]:
+        """Every edge of the given types (used for the corpus-wide graph)."""
+        if not relations:
+            return []
+        marks = ", ".join("?" for _ in relations)
+        rows = self._fetchall(
+            f"SELECT * FROM relations WHERE relation IN ({marks}) ORDER BY created_at",
+            [r.value for r in relations],
+        )
+        return [self._row_to_relation(r) for r in rows]
+
     # ------------------------------------------------------------ keyword index
 
     def refresh_fts(self, segment_ids: list[str]) -> None:

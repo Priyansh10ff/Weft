@@ -91,6 +91,7 @@ Motion is short (120 to 200 ms) and functional: the drawer slides in, a cited ca
 - **Page header:** title, one line of description, actions on the right.
 - **Evidence over cards.** Results are rows: thumbnail, number, source, locator, the matched text, why it was returned. Lists use hairline dividers rather than card grids.
 - **Evidence drawer:** opens from the right over a scrim. It shows the player or page at the cited place, speech with clickable timestamps, the image with matched regions outlined in amber, entities and links.
+- **Graph:** a force-directed SVG on the raised background with a legend and detail panel on the right (stacked under 1000 px). Evidence is a circle in its thread colour, an entity is a small neutral square sized by its links, the focused node has an amber ring. Cross-modal links (`depicts`, `corroborates`) are solid and light, same-recording links are dashed, `mentions` are faint. Hovering or selecting a node dims everything else and turns its links amber. Every link is also available as a table below the graph.
 - **Side by side:** the baseline comparison and the evaluation's per-question view put the text-only result and Weft in two equal columns, which stack under 720 px.
 - **Widths:** layouts work from 360 px. Tables scroll horizontally inside their card rather than the page.
 

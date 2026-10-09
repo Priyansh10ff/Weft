@@ -72,6 +72,7 @@ The sidebar in the workspace and `GET /health` show which providers are active. 
 - **Ask:** a question, an answer with citations, ranked evidence and a comparison with text-only RAG
 - **Library:** upload files and follow their jobs
 - **Entities:** every mention of a thing across files, over time
+- **Graph:** the whole knowledge base as linked evidence and entities, or one node's neighbourhood
 - **Evaluate:** run the gold set and inspect each question
 
 **API.** Upload a file, then ask:

@@ -409,6 +409,6 @@ class GraphEdge(BaseModel):
 class GraphView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    center: str
+    center: str | None = None
     nodes: list[GraphNode] = Field(default_factory=list)
     edges: list[GraphEdge] = Field(default_factory=list)

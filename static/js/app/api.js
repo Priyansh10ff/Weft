@@ -42,6 +42,7 @@ export const api = {
   entity: (id) => request(`/entities/${encodeURIComponent(id)}`),
   entityTimeline: (id) => request(`/entities/${encodeURIComponent(id)}/timeline`),
   graph: (id, depth = 1) => request(`/graph/${encodeURIComponent(id)}?depth=${depth}`),
+  graphOverview: ({ entities = true } = {}) => request(`/graph?entities=${entities}`),
   job: (id) => request(`/jobs/${encodeURIComponent(id)}`),
   query: (query, limit = 8, signal) => request("/query", { method: "POST", body: { query, limit }, signal }),
   compare: (query, limit = 8, signal) => request("/query/compare", { method: "POST", body: { query, limit }, signal }),

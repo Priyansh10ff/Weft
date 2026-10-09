@@ -186,6 +186,18 @@ def test_api_links_timeline_graph_and_recorded_at(client, repo):
     assert client.get("/graph/nope").status_code == 404
     assert client.post("/graph/relink").json()["depicts"] >= 1
 
+    overview = client.get("/graph").json()
+    assert overview["center"] is None
+    kinds = {n["kind"] for n in overview["nodes"]}
+    assert kinds == {"segment", "entity"}  # Redis ties both sources together
+    assert {e["relation"] for e in overview["edges"]} >= {"depicts", "mentions"}
+    known = {n["id"] for n in overview["nodes"]}
+    assert all(e["source"] in known and e["target"] in known for e in overview["edges"])
+    no_entities = client.get("/graph", params={"entities": "false"}).json()
+    assert {n["kind"] for n in no_entities["nodes"]} == {"segment"}
+    single = client.get("/graph", params={"min_sources": 3}).json()
+    assert all(n["kind"] == "segment" for n in single["nodes"])
+
 
 def test_demo_seed_is_linked_across_modalities(client, repo):
     client.post("/demo/seed")

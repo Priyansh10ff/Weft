@@ -71,7 +71,8 @@ Weft is not a hosted SaaS, a video editor, a general chatbot or a replacement fo
 - Grounded answers with numbered citations, or an extractive summary when no model key is configured
 
 **Website**
-- Landing page and a workspace with Ask, Library, Entities and Evaluate
+- Landing page and a workspace with Ask, Library, Entities, Graph and Evaluate
+- Graph of the whole knowledge base, or of one piece of evidence and everything linked to it
 - Evidence drawer that plays video from the cited second and shows the cited page or image region
 - Side-by-side comparison with a text-only baseline for any question
 - One-click sample data

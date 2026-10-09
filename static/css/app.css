@@ -336,6 +336,64 @@ tr.is-weft .bar i { background: var(--signal); }
 .eval-ref { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .eval-via { margin-left: auto; flex: none; color: var(--signal); border-color: color-mix(in srgb, var(--signal) 35%, transparent); }
 
+/* ---- Graph ---- */
+.drawer-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 12px; align-items: start; }
+.graph-card { overflow: hidden; background: var(--bg-raised); }
+.graph-stage { min-height: 420px; }
+.graph-svg { display: block; width: 100%; height: auto; max-height: 72vh; touch-action: none; cursor: grab; user-select: none; }
+.graph-svg:active { cursor: grabbing; }
+.g-edge { stroke: var(--line-3); stroke-width: 1.4; transition: stroke 0.12s, opacity 0.12s; }
+.g-edge.rel-depicts, .g-edge.rel-corroborates { stroke: var(--text-2); stroke-width: 1.6; }
+.g-edge.rel-mentions { stroke: var(--line-2); stroke-width: 1; }
+.g-edge.dashed { stroke-dasharray: 4 4; }
+.g-node { cursor: pointer; outline: none; }
+.g-node circle { fill: var(--c, var(--muted)); stroke: var(--bg-raised); stroke-width: 2; }
+.g-node.entity rect { fill: var(--surface-3); stroke: var(--line-3); stroke-width: 1.2; }
+.g-node.center circle, .g-node.center rect { stroke: var(--signal); stroke-width: 2.5; }
+.g-label { font: 500 11px/1 var(--font); fill: var(--muted); pointer-events: none; paint-order: stroke; stroke: var(--bg-raised); stroke-width: 3px; }
+.g-node.segment .g-label { opacity: 0; }
+.graph-svg.labels-on .g-node.segment .g-label { opacity: 1; }
+.g-node.entity .g-label { fill: var(--text-2); pointer-events: auto; }
+.g-node.center .g-label, .g-node:focus-visible .g-label { opacity: 1; fill: var(--text); }
+.g-node:focus-visible circle, .g-node:focus-visible rect { stroke: var(--signal); stroke-width: 2.5; }
+.graph-svg.focused .g-node { opacity: 0.22; }
+.graph-svg.focused .g-node.lit { opacity: 1; }
+.graph-svg.focused .g-node.lit .g-label { opacity: 1; fill: var(--text); }
+.graph-svg.focused .g-edge { opacity: 0.08; }
+.graph-svg.focused .g-edge.lit { opacity: 1; stroke: var(--signal); }
+.graph-side { display: grid; gap: 12px; }
+.graph-legend { display: grid; gap: 10px; }
+.graph-legend .section-label { margin: 4px 0 0; }
+.legend-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; font-size: 13px; color: var(--text-2); }
+.legend-list li { display: flex; align-items: center; gap: 9px; }
+.legend-list li .num { margin-left: auto; font-size: 12px; }
+.legend-entity { width: 9px; height: 9px; border-radius: 2px; background: var(--surface-3); border: 1px solid var(--line-3); flex: none; }
+.legend-toggle { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; }
+.legend-toggle input { margin: 0; accent-color: var(--signal); }
+.legend-line { width: 18px; height: 0; border-top: 1.5px solid var(--line-3); flex: none; }
+.legend-line.rel-depicts, .legend-line.rel-corroborates { border-top-color: var(--text-2); }
+.legend-line.rel-mentions { border-top-color: var(--line-2); }
+.legend-line.dashed { border-top-style: dashed; }
+.graph-hint { font-size: 12px; margin-top: 4px; }
+.graph-detail { display: grid; gap: 10px; }
+.graph-detail .section-label { margin: 0; }
+.graph-detail-title { font-size: 15px; line-height: 1.35; word-break: break-word; }
+.graph-actions { gap: 8px; }
+.graph-neighbours { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.graph-neighbours li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.graph-neighbours .link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; text-align: left; }
+.graph-neighbours .tag { flex: none; }
+.graph-links { margin-top: 20px; }
+.graph-table summary { cursor: pointer; list-style: none; margin-bottom: 12px; }
+.graph-table summary::-webkit-details-marker { display: none; }
+.graph-table summary::before { content: "+ "; }
+.graph-table[open] summary::before { content: "− "; }
+.graph-table .table td { font-size: 13px; }
+@media (max-width: 1000px) {
+  .graph-layout { grid-template-columns: 1fr; }
+}
+
 /* responsive */
 @media (max-width: 900px) {
   body.app { grid-template-columns: 1fr; }

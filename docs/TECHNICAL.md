@@ -115,7 +115,7 @@ Weft/
 │   │   ├── gemini.py               Shared client, JSON responses, retries
 │   │   ├── ingestion.py            Nodes → records, the single write path
 │   │   ├── linker.py               Cross-modal and temporal links
-│   │   ├── graph.py                Entity timelines, node neighbourhoods
+│   │   ├── graph.py                Entity timelines, neighbourhoods, corpus overview
 │   │   ├── vector_store.py         Chroma collections keyed by segment ID
 │   │   ├── retrieval.py            Hybrid, graph-aware retrieval
 │   │   ├── answer_synthesizer.py   Grounded answer with citations
@@ -139,7 +139,7 @@ Weft/
 │           ├── api.js              API client, uploads with progress
 │           ├── ui.js               DOM helpers and small components
 │           ├── evidence.js         Evidence drawer
-│           └── views/              ask, library, source, entities, evaluate
+│           └── views/              ask, library, source, entities, graph, evaluate
 │
 ├── test_data/
 │   ├── seed_cross_modal_demo.py    Sample corpus loader (used by /demo/seed and the evaluation)
@@ -156,6 +156,7 @@ Weft/
 | `/app#/library` | Library: uploads with job progress, sources, sample data |
 | `/app#/sources/{id}` | One source and its segments in order |
 | `/app#/entities`, `/app#/entities/{id}` | Entities, and one entity's mentions and timeline |
+| `/app#/graph`, `/app#/graph/{id}?depth=` | The whole graph, or one node's neighbourhood |
 | `/app#/evaluate` | Evaluation report and run |
 | `/docs` | OpenAPI documentation |
 
@@ -361,6 +362,7 @@ Query parameters on every upload: `background` (return 202 with a job), `force` 
 | GET | `/entities?q=&limit=` | Entities with mention, source and modality counts |
 | GET | `/entities/{id}` | Every segment mentioning an entity |
 | GET | `/entities/{id}/timeline` | Mentions of an entity and its aliases ordered by `recorded_at` and position |
+| GET | `/graph?entities=&min_sources=&limit=` | The whole corpus: segments with cross-modal or temporal links, plus entities seen in at least `min_sources` sources (default 2) and their `mentions` edges. The most connected nodes are kept up to `limit` |
 | GET | `/graph/{node_id}?depth=1` | Neighbourhood of a segment or entity: nodes and typed, weighted edges |
 | POST | `/graph/relink` | Recompute all links |
 | POST | `/demo/seed` | Load the sample corpus (disabled with `ENABLE_DEMO=false`) |
@@ -432,7 +434,7 @@ Open `http://127.0.0.1:8000/app` and choose **Load sample data** in the Library,
   - `test_knowledge_store`: repository, transactions, FTS5
   - `test_chroma_index`: index writes, searches, rebuilds
   - `test_upload_jobs`: uploads, deduplication, size limit, background jobs and resume
-  - `test_linker`: each link type, thresholds, `same_as`
+  - `test_linker`: each link type, thresholds, `same_as`, timelines, neighbourhood and overview graph API
   - `test_retrieval`: decomposition, fusion, exact identifiers, expansion, spans and regions
   - `test_knowledge_api`: every knowledge endpoint
   - `test_evaluation`: evidence matching, metrics, dataset validity, end-to-end ranking, the eval API
@@ -448,5 +450,4 @@ Open `http://127.0.0.1:8000/app` and choose **Load sample data** in the Library,
 | Speaker names come from a model | Possible misattribution | Names only when the recording reveals them, lower confidence |
 | No authentication | Anyone who can reach the port can read and upload | Run locally, or put it behind a reverse proxy with auth. API keys planned |
 | Single process, SQLite, in-process workers | Not built for many concurrent users | Server database and a job queue for shared deployments |
-| No graph view in the UI | Links are visible per segment, not as a graph | Graph view (PRD FR22) |
 | Fonts from Google Fonts | The website needs network for its fonts, and falls back to system fonts offline | Self-host the fonts |

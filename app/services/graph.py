@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import deque
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 
 from app.db.repository import KnowledgeRepository
@@ -134,3 +134,75 @@ def neighbourhood(
         nodes=nodes,
         edges=[e for e in edges.values() if e.source in known and e.target in known],
     )
+
+
+OVERVIEW_RELATIONS = (
+    RelationType.DEPICTS,
+    RelationType.CORROBORATES,
+    RelationType.CO_OCCURS,
+    RelationType.SHOWS_SAME,
+)
+
+
+def overview(
+    repo: KnowledgeRepository,
+    *,
+    entities: bool = True,
+    min_sources: int = 2,
+    limit: int = 400,
+) -> GraphView:
+    """The whole knowledge base as one graph.
+
+    Every segment that has a cross-modal or temporal link, plus (optionally)
+    the entities that tie at least ``min_sources`` different sources
+    together, with their ``mentions`` edges. Isolated segments and entities
+    seen in a single source are left out: they add nodes, not structure.
+    """
+    links = repo.list_relations(list(OVERVIEW_RELATIONS))
+    segment_ids: set[str] = set()
+    for rel in links:
+        segment_ids.update((rel.src_id, rel.dst_id))
+
+    entity_edges: list = []
+    if entities:
+        mentions = repo.list_relations([RelationType.MENTIONS])
+        all_segments = {seg.id: seg for batch in repo.iter_all_segments() for seg in batch}
+        sources_of: dict[str, set[str]] = defaultdict(set)
+        for rel in mentions:
+            seg = all_segments.get(rel.src_id)
+            if seg is not None:
+                sources_of[rel.dst_id].add(seg.source_id)
+        keep = {eid for eid, srcs in sources_of.items() if len(srcs) >= min_sources}
+        entity_edges = [r for r in mentions if r.dst_id in keep and r.src_id in all_segments]
+        segment_ids.update(r.src_id for r in entity_edges)
+
+    segments = repo.get_segments(sorted(segment_ids))
+    # Keep the most connected segments when the corpus is larger than the cap.
+    degree: dict[str, int] = defaultdict(int)
+    for rel in [*links, *entity_edges]:
+        degree[rel.src_id] += 1
+        degree[rel.dst_id] += 1
+    entity_ids = {r.dst_id for r in entity_edges}
+    ranked = sorted([*segments, *entity_ids], key=lambda n: degree[n], reverse=True)[:limit]
+    kept = set(ranked)
+
+    filenames: dict[str, str] = {}
+    nodes: list[GraphNode] = []
+    for seg in segments.values():
+        if seg.id not in kept:
+            continue
+        if seg.source_id not in filenames:
+            src = repo.get_source(seg.source_id)
+            filenames[seg.source_id] = src.filename if src else seg.source_id
+        nodes.append(GraphNode(id=seg.id, kind=NodeKind.SEGMENT, label=segment_label(seg, filenames[seg.source_id]),
+                               modality=seg.modality.value, source_id=seg.source_id))
+    for ent in repo.get_entities(sorted(entity_ids & kept)).values():
+        nodes.append(GraphNode(id=ent.id, kind=NodeKind.ENTITY, label=ent.name, entity_type=ent.entity_type))
+
+    known = {n.id for n in nodes}
+    edges = [
+        GraphEdge(id=r.id, source=r.src_id, target=r.dst_id, relation=r.relation, confidence=r.confidence)
+        for r in [*links, *entity_edges]
+        if r.src_id in known and r.dst_id in known
+    ]
+    return GraphView(center=None, nodes=nodes, edges=edges)
