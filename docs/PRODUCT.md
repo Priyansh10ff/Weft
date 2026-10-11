@@ -68,7 +68,7 @@ Weft is not a hosted SaaS, a video editor, a general chatbot or a replacement fo
 - Multi-part questions split into sub-questions so every part gets evidence
 - Evidence pulled in through cross-modal links
 - Each result explains why it was returned and where exactly the match is
-- Grounded answers with numbered citations, or an extractive summary when no model key is configured
+- Grounded answers with numbered citations, or a short quoted summary of the top evidence when no model key is configured
 
 **Website**
 - Landing page and a workspace with Ask, Library, Entities, Graph and Evaluate

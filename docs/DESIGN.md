@@ -4,7 +4,7 @@ The interface is dark, quiet and precise, closer to an editor or a log viewer th
 
 Source of truth: `static/css/weft.css` (tokens and primitives), `static/css/app.css` (workspace), `static/css/landing.css` (landing page).
 
-Related: [PRODUCT.md](./PRODUCT.md) · [TECHNICAL.md](./TECHNICAL.md)
+Related: [PRODUCT.md](./PRODUCT.md) · [TECHNICAL.md](./TECHNICAL.md) · Screenshots of every page in [screenshots/](./screenshots)
 
 ---
 

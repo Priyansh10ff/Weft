@@ -188,3 +188,22 @@ def test_stream_answer_falls_back_when_stream_fails_early():
     events = list(stream_answer("What fixed it?", hits, client=Client()))
     assert len(events) == 1 and events[0][0] == "answer"
     assert events[0][1].method == "fallback-extractive"
+
+
+def test_extractive_answer_is_short_and_cited():
+    from app.services.answer_synthesizer import _fallback_answer
+
+    long_text = "Remediation: checkout now uses exponential backoff. " + "Detail " * 80
+    hits = [
+        {"source": "review.mp4", "timestamp": "00:12 - 00:25", "metadata": {"modality": "video"},
+         "matched_span": {"text": "We added backoff.", "start_seconds": 14, "speaker": "Maya"}},
+        {"source": "grafana.png", "metadata": {"modality": "image"}, "matched_regions": [{"text": "p99 310ms"}]},
+        {"source": "pm.pdf", "timestamp": "Page 3", "metadata": {"modality": "pdf"}, "transcript": long_text},
+        {"source": "extra.json", "timestamp": "r1", "metadata": {"modality": "json"}, "transcript": "Not quoted"},
+    ]
+    answer = _fallback_answer("How was it fixed?", hits)
+    assert answer.method == "fallback-extractive" and answer.grounded
+    assert "Maya says" in answer.answer and "(Evidence 2)" in answer.answer
+    assert "Remediation: checkout now uses exponential backoff.” (Evidence 3)" in answer.answer
+    assert "Not quoted" not in answer.answer
+    assert [s["cited"] for s in answer.sources] == [True, True, True, False]

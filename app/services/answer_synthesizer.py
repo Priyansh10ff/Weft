@@ -90,12 +90,24 @@ def _evidence_block(hits: list[dict[str, Any]]) -> str:
     return "\n\n".join(lines)
 
 
+_EXTRACTIVE_QUOTES = 3
+
+
+def _clip(text: str, limit: int = 220) -> str:
+    """First sentence or two of ``text``, at most ``limit`` characters."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text.rfind(". ", 0, limit)
+    return text[: cut + 1] if cut >= 40 else text[: limit - 1].rstrip() + "\u2026"
+
+
 def _fallback_answer(query: str, hits: list[dict[str, Any]]) -> SynthesizedAnswer:
     """Deterministic, no-LLM extractive answer used when no API key is set.
 
-    Still cross-modal: it stitches together transcript/text evidence and
-    visual-summary evidence from the *same* top hits so the connection
-    between modalities is visible even without generation.
+    Quotes the matched sentence, matched on-screen text, or opening text of
+    the top few hits, each with its location and an ``(Evidence N)``
+    citation, so the answer stays short and every line can be opened.
     """
     if not hits:
         return SynthesizedAnswer(
@@ -108,45 +120,46 @@ def _fallback_answer(query: str, hits: list[dict[str, Any]]) -> SynthesizedAnswe
             method="fallback-empty",
         )
 
+    # Quote the best few pieces, one short line each, with the same
+    # "(Evidence N)" citations the LLM answer uses so the UI links them.
     sentences: list[str] = []
-    sources: list[dict[str, Any]] = []
+    cited: set[int] = set()
     for i, hit in enumerate(hits, start=1):
+        if len(sentences) >= _EXTRACTIVE_QUOTES:
+            break
         metadata = hit.get("metadata") or {}
-        modality = metadata.get("modality") or "unknown"
         source = hit.get("source") or metadata.get("source") or "unknown source"
-        locator = hit.get("timestamp") or metadata.get("timestamp") or "n/a"
-        transcript = (hit.get("transcript") or metadata.get("transcript") or "").strip()
-        visual = (metadata.get("visual_summary") or "").strip()
-
+        locator = hit.get("timestamp") or metadata.get("timestamp")
         span = hit.get("matched_span") or {}
-        if span.get("text"):
-            # Quote the sentence that matched, with its own timestamp.
-            locator = f"{_fmt_seconds(span.get('start_seconds'))}"
-            transcript = span["text"]
+        regions = hit.get("matched_regions") or []
+        text = (hit.get("transcript") or metadata.get("transcript") or "").strip()
+        visual = (metadata.get("visual_summary") or "").strip()
         speakers = metadata.get("speakers") or []
-        fragment_parts = []
-        if transcript:
-            fragment_parts.append(transcript + (f" (said by {', '.join(speakers)})" if speakers else ""))
-        if visual:
-            fragment_parts.append(f"(shown visually: {visual})")
-        if fragment_parts:
-            sentences.append(
-                f"According to {modality} evidence from '{source}' at {locator}: "
-                + " ".join(fragment_parts)
-            )
-        sources.append(
-            {
-                "evidence_index": i,
-                "cited": True,
-                "modality": modality,
-                "source": source,
-                "locator": locator,
-                "similarity_score": hit.get("similarity_score"),
-            }
-        )
+        if span.get("text"):
+            locator = _fmt_seconds(span.get("start_seconds"))
+            quote, kind = span["text"], "said"
+            if span.get("speaker"):
+                speakers = [span["speaker"]]
+        elif regions:
+            quote, kind = " / ".join(r["text"] for r in regions[:2]), "shown"
+        elif text:
+            quote, kind = text, "said" if metadata.get("modality") in ("video", "audio") else "states"
+        elif visual:
+            quote, kind = visual, "shows"
+        else:
+            continue
+        where = f"{source} ({locator})" if locator and locator != "n/a" else source
+        verb = "shows" if kind in ("shown", "shows") else "says"
+        lead = f"In {where}, {speakers[0]} says" if speakers and kind == "said" else f"{where} {verb}"
+        sentences.append(f"{lead}: \u201c{_clip(quote)}\u201d (Evidence {i}).")
+        cited.add(i)
 
-    body = " ".join(sentences) if sentences else "Relevant items were found but contained no extractable text."
-    answer = f"Based on {len(hits)} retrieved item(s) across modalities: {body}"
+    sources = _sources(hits, cited)
+    answer = (
+        " ".join(sentences)
+        if sentences
+        else "Relevant items were found but contained no extractable text."
+    )
     return SynthesizedAnswer(answer=answer, grounded=bool(sentences), sources=sources, method="fallback-extractive")
 
 

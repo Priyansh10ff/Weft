@@ -79,17 +79,20 @@ Related: [PRODUCT.md](./PRODUCT.md) (overview) · [PRD.md](./PRD.md) (requiremen
 
 ```
 Weft/
-├── main.py                         FastAPI app: routers, static mounts, /, /app, /health
+├── main.py                         FastAPI app: middleware, routers, static mounts, /, /app, /health
+├── Dockerfile, docker-compose.yml   Image and local deployment with a /data volume
+├── .github/workflows/ci.yml        Tests, Docker build and smoke test
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── .env.example
 ├── EVALUATION.md                   Latest evaluation report (generated)
-├── docs/                           PRODUCT, PRD, TECHNICAL, DESIGN
+├── docs/                           PRODUCT, PRD, TECHNICAL, DESIGN, screenshots/
 │
 ├── app/
 │   ├── config.py                   Settings from the environment, read on every call
 │   ├── cli.py                      stats, reindex, import-legacy, relink
 │   ├── api/
+│   │   ├── security.py             Request IDs, logging, security headers, CSP, API key
 │   │   ├── router.py               Includes every route module
 │   │   └── routes/
 │   │       ├── _upload.py          Shared upload handling: size limit, dedupe, background jobs
@@ -132,6 +135,7 @@ Weft/
 │   ├── index.html                  Landing page
 │   ├── app.html                    Workspace shell
 │   ├── css/                        weft.css (tokens, primitives), landing.css, app.css
+│   ├── fonts/                      Geist and Geist Mono (woff2, SIL Open Font License)
 │   ├── img/weft-mark.svg
 │   └── js/
 │       ├── landing.js
@@ -298,7 +302,7 @@ The text-only baseline (`search_text_only`) uses the `segments_text_only` collec
 
 ## 8. Answers (`services/answer_synthesizer.py`)
 
-The top hits are formatted as numbered evidence blocks (source, modality, locator, speaker, text, what was shown, matched span) and sent to Gemini with the sub-questions. The model must cite evidence by number and say when the evidence does not support an answer. Without a key, or if the call fails, an extractive summary of the top evidence is returned with `method: "fallback-extractive"`, and `answer.sources` still lists each cited piece.
+The top hits are formatted as numbered evidence blocks (source, modality, locator, speaker, text, what was shown, matched span) and sent to Gemini with the sub-questions. The model must cite evidence by number and say when the evidence does not support an answer. Without a key, or if the call fails, an extractive answer is returned with `method: "fallback-extractive"`: the matched sentence (with its timestamp and speaker), the matched on-screen text, or the opening text of the top three hits, one short quoted line each, with the same `(Evidence N)` citations, so the website links them like a written answer.
 
 `stream_answer` is the streaming variant used by `POST /query/stream` and the Ask page. It asks Gemini for plain prose with inline `(Evidence N)` citations and yields each chunk as it arrives, then a final answer whose cited sources are parsed from the text. If the stream fails before any text, it falls back to `synthesize_answer`. If it fails midway, the text written so far is kept.
 

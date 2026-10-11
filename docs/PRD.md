@@ -94,7 +94,7 @@ Weft ingests every format into one evidence store with exact locations, links re
 
 **Q4. Each result explains itself**: which searches matched it, the sentence or text region that matched, its speaker, and its confidence.
 
-**Q5. The answer cites its evidence** with numbered references and says plainly when the evidence does not support an answer. Without a Gemini key, an extractive summary is returned.
+**Q5. The answer cites its evidence** with numbered references and says plainly when the evidence does not support an answer. Without a Gemini key, an extractive answer quotes the top three pieces of evidence, one line each, with the same numbered citations.
 
 **Q5a. As a user, I see the evidence as soon as it is found** and the answer appears as it is written, with citations linked once it is complete.
 
