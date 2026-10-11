@@ -20,3 +20,10 @@
 *.wav binary
 *.onnx binary
 *.sqlite3 binary
+
+*.woff2 binary
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.mp3 binary
+*.pdf binary

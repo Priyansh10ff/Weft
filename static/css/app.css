@@ -417,6 +417,13 @@ tr.is-weft .bar i { background: var(--signal); }
 body:has(.drawer.open) .tour { right: auto; left: 20px; }
 @media (max-width: 640px) { .tour { right: 16px; bottom: 16px; } body:has(.drawer.open) .tour { display: none; } }
 
+/* ---- API key dialog ---- */
+.key-dialog { padding: 0; width: min(420px, calc(100vw - 32px)); color: var(--text); border-color: var(--line-2); box-shadow: var(--shadow); }
+.key-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+.key-form { display: grid; gap: 12px; padding: 20px; }
+.key-form p { font-size: 13.5px; }
+.key-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
 /* responsive */
 @media (max-width: 900px) {
   body.app { grid-template-columns: 1fr; }

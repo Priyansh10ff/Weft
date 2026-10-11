@@ -1,8 +1,24 @@
 // Thin client over the Weft HTTP API. Every call rejects with an Error whose
 // message is the server's `detail` when there is one.
 
+// Optional API key (servers started with WEFT_API_KEY). Kept per browser.
+const KEY_STORAGE = "weft-api-key";
+export function getApiKey() {
+  try { return localStorage.getItem(KEY_STORAGE) || ""; } catch { return ""; }
+}
+export function setApiKey(key) {
+  try { if (key) localStorage.setItem(KEY_STORAGE, key); else localStorage.removeItem(KEY_STORAGE); } catch { /* storage blocked */ }
+}
+function authHeaders(headers = {}) {
+  const key = getApiKey();
+  return key ? { ...headers, "X-API-Key": key } : headers;
+}
+function authRequired() {
+  window.dispatchEvent(new CustomEvent("weft:auth-required"));
+}
+
 async function request(path, { method = "GET", body, signal } = {}) {
-  const init = { method, signal, headers: {} };
+  const init = { method, signal, headers: authHeaders() };
   if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
@@ -26,6 +42,7 @@ async function request(path, { method = "GET", body, signal } = {}) {
       : detail || `Request failed (${response.status})`;
     const error = new Error(message);
     error.status = response.status;
+    if (response.status === 401) authRequired();
     throw error;
   }
   return data;
@@ -60,7 +77,7 @@ export async function queryStream(query, { limit = 8, signal, onRetrieval, onDel
   try {
     response = await fetch("/query/stream", {
       method: "POST", signal,
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      headers: authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }),
       body: JSON.stringify({ query, limit }),
     });
   } catch (error) {
@@ -72,6 +89,7 @@ export async function queryStream(query, { limit = 8, signal, onRetrieval, onDel
     try { detail = (await response.json()).detail; } catch { /* not JSON */ }
     const error = new Error(typeof detail === "string" ? detail : `Request failed (${response.status})`);
     error.status = response.status;
+    if (response.status === 401) authRequired();
     throw error;
   }
   const reader = response.body.getReader();
@@ -127,6 +145,8 @@ export function uploadFile(file, { onProgress, force = false } = {}) {
     const params = new URLSearchParams({ background: "true" });
     if (force) params.set("force", "true");
     xhr.open("POST", `/upload/${modality}?${params}`);
+    const key = getApiKey();
+    if (key) xhr.setRequestHeader("X-API-Key", key);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress?.(event.loaded / event.total);
     };
@@ -134,6 +154,7 @@ export function uploadFile(file, { onProgress, force = false } = {}) {
     xhr.onload = () => {
       let data = null;
       try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status === 401) authRequired();
       if (xhr.status >= 200 && xhr.status < 300) resolve(data);
       else reject(new Error((data && data.detail) || `Upload failed (${xhr.status})`));
     };

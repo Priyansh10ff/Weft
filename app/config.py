@@ -65,6 +65,11 @@ class Settings:
     # Website
     demo_enabled: bool
 
+    # Security and operations
+    api_key: str | None
+    cors_origins: tuple[str, ...]
+    log_level: str
+
     @property
     def gemini_enabled(self) -> bool:
         return bool(self.gemini_api_key)
@@ -87,4 +92,7 @@ def get_settings() -> Settings:
         job_workers=max(1, _int("JOB_WORKERS", 2)),
         max_upload_mb=max(1, _int("MAX_UPLOAD_MB", 500)),
         demo_enabled=_flag("ENABLE_DEMO", True),
+        api_key=(os.getenv("WEFT_API_KEY") or "").strip() or None,
+        cors_origins=tuple(o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()),
+        log_level=(os.getenv("LOG_LEVEL") or "INFO").upper(),
     )

@@ -71,7 +71,7 @@ A `.mod-{modality}` class sets `--c` to the thread colour, and components read `
 | Page titles | Geist 600 | 28 px, −0.03em |
 | Landing display | Geist 600 | Hero 38 to 60 px (−0.045em), section heads 28 to 40 px |
 
-Both fonts load from Google Fonts with `display=swap`, and fall back to the system UI and monospace stacks.
+Both fonts are self-hosted in `static/fonts/` (Latin subset, SIL Open Font License) with `font-display: swap`, so the site makes no third-party requests and falls back to the system UI and monospace stacks while they load.
 
 ## 4. Shape, space and motion
 

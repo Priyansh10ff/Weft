@@ -1,6 +1,6 @@
 // Workspace shell: hash router, shared store, sidebar status, shortcuts.
 
-import { api } from "./api.js";
+import { api, getApiKey, setApiKey } from "./api.js";
 import { closeEvidence } from "./evidence.js";
 import { h, clear, toast, fill } from "./ui.js";
 import { renderAsk } from "./views/ask.js";
@@ -118,6 +118,40 @@ document.addEventListener("keydown", (event) => {
     if (path !== "/ask" && path !== "/") navigate("#/ask");
     requestAnimationFrame(() => document.querySelector(".ask-input")?.focus());
   }
+});
+
+// A server started with WEFT_API_KEY answers 401 to writes without the key:
+// ask for it once, keep it in this browser, and let the user retry.
+let keyDialog = null;
+function askForKey() {
+  if (keyDialog?.open) return;
+  if (!keyDialog) {
+    const input = h("input", { class: "input", type: "password", autocomplete: "off", "aria-label": "API key", placeholder: "API key" });
+    keyDialog = h("dialog", { class: "key-dialog card" },
+      h("form", { method: "dialog", class: "key-form" },
+        h("h3", {}, "This server needs an API key"),
+        h("p", { class: "muted" }, "Uploads, questions and other changes need the key the server was started with (WEFT_API_KEY). It is kept in this browser only."),
+        input,
+        h("div", { class: "key-actions" },
+          h("button", { class: "btn btn-ghost", value: "cancel", type: "submit" }, "Cancel"),
+          h("button", { class: "btn btn-primary", value: "save", type: "submit" }, "Save key"),
+        ),
+      ),
+    );
+    keyDialog.addEventListener("close", () => {
+      if (keyDialog.returnValue === "save" && input.value.trim()) {
+        setApiKey(input.value.trim());
+        toast("Key saved. Try that again.", "ok");
+      }
+      input.value = "";
+    });
+    document.body.append(keyDialog);
+  }
+  keyDialog.showModal();
+}
+window.addEventListener("weft:auth-required", () => {
+  if (getApiKey()) toast("The saved API key was rejected.", "err");
+  askForKey();
 });
 
 document.getElementById("nav-toggle")?.addEventListener("click", () => document.body.classList.toggle("nav-open"));

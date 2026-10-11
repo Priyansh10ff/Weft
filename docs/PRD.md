@@ -4,7 +4,7 @@
 |---|---|
 | **Product** | Weft, multimodal data pipeline for RAG |
 | **Owner** | Priyansh Dugar |
-| **Status** | v0.2, runs locally. v0.3 planned |
+| **Status** | v0.3, runs locally or in Docker |
 | **Last updated** | October 2026 |
 
 Related: [PRODUCT.md](./PRODUCT.md) (overview) · [TECHNICAL.md](./TECHNICAL.md) (implementation) · [DESIGN.md](./DESIGN.md) (interface)
@@ -137,8 +137,8 @@ Weft ingests every format into one evidence store with exact locations, links re
 | FR21 | Sample data loader and a guided tour (Ask, Evidence, Graph, Evaluate) | Should | Done |
 | FR22 | Interactive graph view: whole corpus and a node's neighbourhood | Should | Done |
 | FR23 | Streaming answers (evidence first, then the answer as it is written) | Could | Done |
-| FR24 | Docker image and CI pipeline | Should | **Open** (v0.3) |
-| FR25 | API authentication for shared deployments | Could | Open (later) |
+| FR24 | Docker image and CI pipeline | Should | Done |
+| FR25 | Optional API key on every write for shared deployments | Could | Done |
 | FR26 | Evaluation on a user's own corpus with their own gold set | Could | Open (later) |
 
 ## 7. Non-functional requirements
@@ -148,6 +148,7 @@ Weft ingests every format into one evidence store with exact locations, links re
 | **Provenance** | Every segment has a locator, an extractor and a confidence. Every link stores its reason. Answers cite segments by number |
 | **Integrity** | A source, its segments, entities and links are committed in one SQLite transaction. The vector index is keyed by segment ID and can be rebuilt from SQLite |
 | **Resilience** | Enrichment failures (speakers, entities) never fail an upload. They are stored as warnings on the source. Missing API keys degrade video, PDF, entity and answer features without failing them. Image uploads need Gemini |
+| **Security** | Optional API key on every write, constant-time comparison. Same-origin by default. Security headers and a strict Content Security Policy on the website. Uploads checked by extension, size (while streaming) and file signature. Unhandled errors never return a stack trace |
 | **Privacy** | Files and derived artefacts stay on local disk. Only content sent to Gemini or Groq leaves the machine, and only when their keys are set. `/health` reports which providers are on, never the keys |
 | **Performance** | Retrieval p50 under 1 s on the sample corpus on a laptop. Long uploads run in the background. Repeated keyframes skip the vision call |
 | **Quality** | Weft must score at or above text-only RAG on every overall metric of the gold set, and changes to retrieval are judged on the evaluation |
@@ -172,9 +173,10 @@ Measured on the bundled gold set with the MiniLM embedding model, top 5.
 
 | Version | Scope |
 |---|---|
-| **v0.2 (current)** | Everything marked Done above |
-| **v0.3** | Docker image and CI (FR24), cross-modal retrieval on a par with hybrid |
-| **Later** | API authentication (FR25), evaluation on user corpora (FR26), larger embedding models, a second gold set from real recordings |
+| **v0.2** | Ingestion, linking, retrieval, evaluation, website |
+| **v0.3 (current)** | Graph view, streaming answers, guided tour, Docker, CI, API key and hardening |
+| **Next** | Cross-modal retrieval on a par with hybrid, testing on real recordings with Gemini and Groq configured |
+| **Later** | Evaluation on user corpora (FR26), larger embedding models, a second gold set from real recordings, read access control |
 
 ## 10. Risks and open questions
 

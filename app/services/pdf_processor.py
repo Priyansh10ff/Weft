@@ -57,7 +57,7 @@ def _open_renderer(pdf_path: Path) -> Any:
         import pymupdf as fitz  # type: ignore[import-untyped]
     except ImportError:
         try:
-            import fitz  # type: ignore[import-untyped,no-redef]
+            import fitz  # type: ignore[import-untyped,no-redef]  # PyMuPDF before 1.24
         except ImportError:
             return None
     try:

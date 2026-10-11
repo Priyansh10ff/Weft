@@ -31,7 +31,7 @@ from app.schemas.knowledge import (
     UploadAccepted,
 )
 from app.schemas.records import SourceStatus
-from app.services.storage import persist_upload
+from app.services.storage import UploadTooLarge, persist_upload
 
 _log = logging.getLogger(__name__)
 
@@ -80,6 +80,39 @@ def acknowledge_upload(file: UploadFile, modality: MediaModality) -> UploadAccep
     return UploadAccepted(upload_id=uuid4(), source_asset=source_asset)
 
 
+def content_matches(path: Path, modality: MediaModality) -> bool:
+    """Check the file's leading bytes, so a renamed file can't reach a decoder.
+
+    Extensions and MIME types come from the client; the signature comes from
+    the file itself.
+    """
+    with path.open("rb") as handle:
+        head = handle.read(65536)
+    if modality is MediaModality.PDF:
+        return b"%PDF-" in head[:1024]
+    if modality is MediaModality.IMAGE:
+        return head.startswith(b"\x89PNG\r\n\x1a\n") or head.startswith(b"\xff\xd8\xff")
+    if modality is MediaModality.VIDEO:
+        return head[4:8] == b"ftyp"
+    if modality is MediaModality.AUDIO:
+        return (
+            head.startswith((b"ID3", b"fLaC", b"OggS"))
+            or (head[:4] == b"RIFF" and head[8:12] == b"WAVE")
+            or head[4:8] == b"ftyp"  # m4a
+            or (len(head) > 1 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0)  # MPEG / ADTS frame sync
+        )
+    if modality is MediaModality.JSON:
+        if b"\x00" in head:
+            return False
+        try:
+            head.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            # A multi-byte character cut at the 64 KB boundary is fine.
+            return exc.start >= len(head) - 3
+        return True
+    return True
+
+
 def _discard(path: Path) -> None:
     shutil.rmtree(path.parent, ignore_errors=True)
 
@@ -100,24 +133,26 @@ async def handle_upload(
 
     receipt = acknowledge_upload(file, modality)
     asset = receipt.source_asset
+    limit_mb = get_settings().max_upload_mb
     try:
-        path = await persist_upload(file, asset.source_id)
+        path = await persist_upload(file, asset.source_id, max_bytes=limit_mb * 1024 * 1024)
+    except UploadTooLarge as exc:
+        raise HTTPException(status_code=413, detail=f"File exceeds the {limit_mb} MB upload limit.") from exc
     except OSError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unable to store the uploaded file.",
         ) from exc
 
-    limit = get_settings().max_upload_mb * 1024 * 1024
-    if path.stat().st_size > limit:
-        _discard(path)
-        raise HTTPException(
-            status_code=413,
-            detail=f"File exceeds the {get_settings().max_upload_mb} MB upload limit.",
-        )
     if path.stat().st_size == 0:
         _discard(path)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The file is empty.")
+    if not content_matches(path, modality):
+        _discard(path)
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"The file's contents are not a valid {modality.value} file.",
+        )
 
     repo = get_repository()
     if not force:

@@ -11,7 +11,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
+from app.api.security import HardeningMiddleware
+from app.config import get_settings
 from app.services.storage import storage_root
+
+_settings = get_settings()
+logging.basicConfig(
+    level=getattr(logging, _settings.log_level, logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 
 @asynccontextmanager
@@ -32,19 +40,23 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Weft",
-    version="0.2.0",
+    version="0.3.0",
     description="Turns video, audio, images, PDFs and JSON into structured, linked, retrievable knowledge.",
     lifespan=lifespan,
 )
 
-# The dashboard is static HTML/CSS/JS served same-origin, but CORS is kept
-# open for local demo convenience (e.g. hitting the API from a notebook).
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(HardeningMiddleware)
+# Added after the hardening middleware so it wraps it: a 401 still carries CORS headers.
+# The website is served from this origin, so no CORS is needed for it.
+# CORS_ORIGINS (comma-separated, or "*") opens the API to other origins.
+if _settings.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(_settings.cors_origins),
+        allow_methods=["GET", "POST", "DELETE"],
+        allow_headers=["Content-Type", "X-API-Key", "Authorization", "X-Request-ID"],
+        expose_headers=["X-Request-ID"],
+    )
 
 _storage = storage_root()
 for _name in ("frames", "uploads", "derived"):
@@ -79,8 +91,6 @@ async def workspace() -> FileResponse:
 @app.get("/health", tags=["system"])
 async def health_check() -> dict[str, object]:
     """Readiness probe plus which providers are configured (never the keys)."""
-    from app.config import get_settings
-
     settings = get_settings()
     return {
         "status": "ok",
@@ -92,4 +102,5 @@ async def health_check() -> dict[str, object]:
             "entities": "llm" if settings.gemini_enabled else "heuristic",
         },
         "demo_enabled": settings.demo_enabled,
+        "auth_required": bool(settings.api_key),
     }

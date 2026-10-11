@@ -34,6 +34,6 @@ faster-whisper>=1.0,<2.0
 numpy>=1.26,<3.0
 requests>=2.32,<3.0
 python-dotenv>=1.0,<2.0
-opencv-python>=4.10,<6.0
+opencv-python-headless>=4.10,<6.0
 google-genai>=1.0,<2.0
 groq>=0.31,<1.0

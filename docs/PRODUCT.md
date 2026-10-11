@@ -110,3 +110,4 @@ Weft is not a hosted SaaS, a video editor, a general chatbot or a replacement fo
 | Transcription | Groq Whisper, with local faster-whisper as fallback |
 | Video and documents | OpenCV, PyMuPDF, pypdf, Pillow |
 | Frontend | Plain HTML, CSS and ES modules served by FastAPI |
+| Packaging | Docker image and docker compose, CI on GitHub Actions |

@@ -1,6 +1,7 @@
 """Safe, asynchronous staging helpers for uploaded media and derivatives."""
 
 import os
+import shutil
 from pathlib import Path
 from uuid import UUID
 
@@ -40,16 +41,31 @@ def derived_url(path: Path) -> str:
     return f"/derived/{relative.as_posix()}"
 
 
-async def persist_upload(upload: UploadFile, source_id: UUID) -> Path:
-    """Stream an UploadFile to source-id-scoped storage without loading it all in RAM."""
+class UploadTooLarge(Exception):
+    """Raised by ``persist_upload`` as soon as an upload passes ``max_bytes``."""
+
+
+async def persist_upload(upload: UploadFile, source_id: UUID, max_bytes: int | None = None) -> Path:
+    """Stream an UploadFile to source-id-scoped storage without loading it all in RAM.
+
+    With ``max_bytes`` the copy stops (and the partial file is removed) as soon
+    as the limit is passed, instead of writing the whole file first.
+    """
     filename = Path(upload.filename or "").name or "upload.bin"
     destination = storage_root() / "uploads" / str(source_id) / filename
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     await upload.seek(0)
+    written = 0
     async with await open_file(destination, "wb") as destination_file:
         while chunk := await upload.read(_CHUNK_SIZE):
+            written += len(chunk)
+            if max_bytes is not None and written > max_bytes:
+                break
             await destination_file.write(chunk)
+    if max_bytes is not None and written > max_bytes:
+        shutil.rmtree(destination.parent, ignore_errors=True)
+        raise UploadTooLarge(destination.name)
     await upload.seek(0)
     return destination
 

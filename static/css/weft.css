@@ -4,6 +4,14 @@
    modality, used everywhere a piece of evidence appears.
    ========================================================================== */
 
+/* Self-hosted fonts (SIL Open Font License, see static/fonts/LICENSE.txt). */
+@font-face { font-family: "Geist"; font-style: normal; font-weight: 400; font-display: swap; src: url("../fonts/geist-400.woff2") format("woff2"); }
+@font-face { font-family: "Geist"; font-style: normal; font-weight: 500; font-display: swap; src: url("../fonts/geist-500.woff2") format("woff2"); }
+@font-face { font-family: "Geist"; font-style: normal; font-weight: 600; font-display: swap; src: url("../fonts/geist-600.woff2") format("woff2"); }
+@font-face { font-family: "Geist"; font-style: normal; font-weight: 700; font-display: swap; src: url("../fonts/geist-700.woff2") format("woff2"); }
+@font-face { font-family: "Geist Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("../fonts/geist-mono-400.woff2") format("woff2"); }
+@font-face { font-family: "Geist Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("../fonts/geist-mono-500.woff2") format("woff2"); }
+
 :root {
   --bg: #0a0a09;
   --bg-raised: #0e0e0d;

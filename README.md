@@ -2,7 +2,7 @@
 
 Multimodal data pipeline for RAG. Weft ingests video, audio, images, PDFs and JSON, keeps the exact location of every piece of evidence, links what was said to what was shown across files, and answers questions with citations you can open at the right second, page or region.
 
-![Python](https://img.shields.io/badge/python-3.10%2B-3776AB) ![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688) ![SQLite](https://img.shields.io/badge/SQLite-FTS5-003B57) ![ChromaDB](https://img.shields.io/badge/ChromaDB-1.x-5A3FC0)
+[![CI](https://github.com/Priyansh10ff/Weft/actions/workflows/ci.yml/badge.svg)](https://github.com/Priyansh10ff/Weft/actions/workflows/ci.yml) ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB) ![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688) ![SQLite](https://img.shields.io/badge/SQLite-FTS5-003B57) ![ChromaDB](https://img.shields.io/badge/ChromaDB-1.x-5A3FC0)
 
 [Product](docs/PRODUCT.md) · [Requirements](docs/PRD.md) · [Technical reference](docs/TECHNICAL.md) · [Design system](docs/DESIGN.md) · [Evaluation report](EVALUATION.md)
 
@@ -54,6 +54,15 @@ Open [http://127.0.0.1:8000/app](http://127.0.0.1:8000/app) and choose **Load sa
 
 The first start downloads the MiniLM embedding model (about 80 MB).
 
+### With Docker
+
+```bash
+cp .env.example .env                   # optional: add API keys
+docker compose up --build
+```
+
+Then open [http://localhost:8000/app](http://localhost:8000/app). Data is kept in the `weft-data` volume.
+
 ### API keys
 
 Both are optional. Everything runs without them, with reduced features.
@@ -64,6 +73,10 @@ Both are optional. Everything runs without them, with reduced features.
 | `GROQ_API_KEY` ([get one](https://console.groq.com/keys)) | Fast Whisper transcription | Local faster-whisper (slower, downloads a model) |
 
 The sidebar in the workspace and `GET /health` show which providers are active. Every other setting is listed in [TECHNICAL.md §11](docs/TECHNICAL.md#11-configuration).
+
+### Running it for others
+
+Set `WEFT_API_KEY` and every upload, question, delete and evaluation run needs it (`X-API-Key` header, or entered once in the website). Reads stay open, so keep private data on a private network or behind your own auth. CORS is closed unless `CORS_ORIGINS` is set. Security headers, upload signature checks and request IDs are always on. Details in [TECHNICAL.md §12](docs/TECHNICAL.md#12-security-and-operations).
 
 ## Using it
 
@@ -120,6 +133,8 @@ static/               landing page and workspace (HTML, CSS, ES modules)
 test_data/            sample corpus and loader
 tests/                pytest suites
 docs/                 product, requirements, technical and design docs
+Dockerfile            image; docker-compose.yml runs it with a data volume
+.github/workflows/    CI: tests, Docker build and smoke test
 ```
 
 ## Tests
@@ -129,7 +144,7 @@ pip install -r requirements-dev.txt
 pytest tests
 ```
 
-Tests need no network or API keys: Gemini and Groq are disabled and a deterministic embedding replaces MiniLM.
+Tests need no network or API keys: Gemini and Groq are disabled and a deterministic embedding replaces MiniLM. GitHub Actions runs them on Python 3.10 and 3.12 and builds and smoke-tests the Docker image on every push.
 
 ## Documentation
 

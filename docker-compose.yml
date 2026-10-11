@@ -1,0 +1,16 @@
+# docker compose up --build    then open http://localhost:8000/app
+services:
+  weft:
+    build: .
+    image: weft:latest
+    ports:
+      - "${WEFT_PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - weft-data:/data
+    restart: unless-stopped
+
+volumes:
+  weft-data:

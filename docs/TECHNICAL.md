@@ -71,7 +71,8 @@ Related: [PRODUCT.md](./PRODUCT.md) (overview) · [PRD.md](./PRD.md) (requiremen
 | Images | Pillow |
 | Config | python-dotenv, environment variables |
 | Frontend | Plain HTML, CSS and ES modules. No build step, no framework |
-| Fonts | Geist and Geist Mono (Google Fonts) |
+| Fonts | Geist and Geist Mono, self-hosted in `static/fonts/` (SIL Open Font License) |
+| Packaging | Docker (python:3.12-slim), docker compose, GitHub Actions |
 | Tests | pytest, httpx (FastAPI TestClient) |
 
 ## 3. Repository structure
@@ -406,8 +407,41 @@ All settings come from environment variables, or `.env` in the project root. `ap
 | `JOB_WORKERS` | `2` | Background ingestion workers |
 | `MAX_UPLOAD_MB` | `500` | Upload size limit |
 | `ENABLE_DEMO` | `true` | Allow `POST /demo/seed` |
+| `WEFT_API_KEY` | | When set, every `POST` and `DELETE` needs it as `X-API-Key` or `Authorization: Bearer` |
+| `CORS_ORIGINS` | | Comma-separated origins (or `*`) allowed to call the API from a browser. Empty means same origin only |
+| `LOG_LEVEL` | `INFO` | Python log level |
+| `PORT` | `8000` | Port inside the Docker image |
 
-## 12. Local development
+## 12. Security and operations
+
+Implemented in `app/api/security.py` (one middleware) and `app/api/routes/_upload.py`.
+
+| Concern | Behaviour |
+|---|---|
+| API key | Off by default. With `WEFT_API_KEY` set, every `POST`, `PUT`, `PATCH` and `DELETE` (uploads, questions, evaluation runs, deletes, relinking, sample data) returns 401 without the key. The comparison is constant-time. Reads stay open so the browser can play media; keep private data behind your own auth or network. The website asks for the key once and keeps it in the browser |
+| CORS | Closed by default: the website is same-origin. `CORS_ORIGINS` opens the API to listed origins |
+| Headers | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy` on every response. A Content Security Policy that allows only this origin (no inline scripts) on everything except `/docs` and `/redoc`, which load Swagger UI from a CDN |
+| Uploads | The extension or MIME type must match the endpoint (415). The size limit is enforced while the file streams in, so an oversized upload stops at `MAX_UPLOAD_MB` (413). The file's first bytes must match its type (PDF, PNG/JPEG, MP4, MP3/WAV/M4A/AAC/FLAC/OGG, UTF-8 text), so a renamed file never reaches a decoder (415). Empty files are refused (400) |
+| Errors | Route errors return `{ "detail": ... }`. Anything unhandled is logged with its stack trace and returned as a JSON 500 with the request ID, never a trace |
+| Logging | One line per request (method, path, status, duration, request ID), skipping static and media files. `X-Request-ID` is accepted from the caller or generated, and returned on every response |
+| Secrets | Read from the environment only. `/health` reports which providers are configured and whether a key is required, never the values |
+
+### Docker
+
+```bash
+docker compose up --build            # http://localhost:8000/app
+```
+
+The image runs as a non-root user, keeps everything under the `/data` volume (`MEDIA_STORAGE_ROOT`, `KNOWLEDGE_DB_PATH`, `CHROMA_PATH`), bakes in the MiniLM embedding model, and has a health check on `/health`. `docker-compose.yml` reads `.env` if present. Run one container per data volume: SQLite and the job workers live in one process.
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request:
+
+1. **Tests** on Python 3.10 and 3.12: install, `ruff` for syntax and undefined-name errors, `pytest`.
+2. **Docker image**: build, start it, wait for `/health`, load the sample data and ask a question.
+
+## 13. Local development
 
 ```bash
 python -m venv .venv
@@ -428,7 +462,7 @@ Open `http://127.0.0.1:8000/app` and choose **Load sample data** in the Library,
 | `python -m app.evaluation run` | Run the gold set (see section 9) |
 | `pytest tests` | All tests |
 
-## 13. Testing
+## 14. Testing
 
 - **Runner:** pytest. API tests use FastAPI's TestClient against the real app with a temporary database and index.
 - **No network, no keys.** Tests use a deterministic hashing embedding instead of MiniLM and stub every Gemini and Groq call.
@@ -442,9 +476,10 @@ Open `http://127.0.0.1:8000/app` and choose **Load sample data** in the Library,
   - `test_retrieval`: decomposition, fusion, exact identifiers, expansion, spans and regions
   - `test_knowledge_api`: every knowledge endpoint, the answer stream (offline, with a fake Gemini stream, and a failing one)
   - `test_evaluation`: evidence matching, metrics, dataset validity, end-to-end ranking, the eval API
+  - `test_security`: headers, request IDs, API key on writes, content signatures, streaming size limit
 - **Retrieval changes** are checked with `python -m app.evaluation run` at k = 3 and k = 5 with the real embedding model before they are kept.
 
-## 14. Known limitations
+## 15. Known limitations
 
 | Limitation | Effect | Planned fix |
 |---|---|---|
@@ -452,6 +487,5 @@ Open `http://127.0.0.1:8000/app` and choose **Load sample data** in the Library,
 | Cross-modal Complete@5 is 25% vs 50% for hybrid | One cross-modal question in four loses a required piece to a related ticket | Modality-aware selection, better linker coverage |
 | Small gold set on sample data | Numbers may not transfer to other corpora | Second gold set from real recordings, evaluation on user corpora |
 | Speaker names come from a model | Possible misattribution | Names only when the recording reveals them, lower confidence |
-| No authentication | Anyone who can reach the port can read and upload | Run locally, or put it behind a reverse proxy with auth. API keys planned |
+| Reads are not authenticated | With `WEFT_API_KEY` set, writes need the key but anyone who can reach the port can read | Run locally or on a private network, or behind a reverse proxy with auth |
 | Single process, SQLite, in-process workers | Not built for many concurrent users | Server database and a job queue for shared deployments |
-| Fonts from Google Fonts | The website needs network for its fonts, and falls back to system fonts offline | Self-host the fonts |
