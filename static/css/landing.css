@@ -125,3 +125,31 @@ pre.code .s { color: var(--m-audio); }
   .modalities { grid-template-columns: 1fr; }
   section.block { padding: 72px 0; }
 }
+
+/* see it in action */
+.demo { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 28px; align-items: start; }
+.demo-steps { display: grid; gap: 8px; }
+.demo-step { display: grid; gap: 8px; text-align: left; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-lg); background: transparent; color: var(--text-2); font: inherit; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.demo-step:hover { border-color: var(--line-2); }
+.demo-t { display: flex; align-items: center; gap: 12px; font-weight: 500; color: var(--text); font-size: 15px; }
+.demo-t b { font: 600 11px/1 var(--mono); color: var(--muted); }
+.demo-d, .demo-prog { display: none; margin-left: 27px; }
+.demo-d { font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+.demo-prog { height: 2px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.demo-prog i { display: block; height: 100%; width: 0; background: var(--signal); }
+.demo-step[aria-selected="true"] { border-color: color-mix(in srgb, var(--signal) 45%, var(--line)); background: var(--signal-soft); }
+.demo-step[aria-selected="true"] .demo-t b { color: var(--signal); }
+.demo-step[aria-selected="true"] .demo-d, .demo-step[aria-selected="true"] .demo-prog { display: block; }
+.demo-step[aria-selected="true"] .demo-prog i { animation: demo-fill var(--demo-ms, 5000ms) linear forwards; }
+.demo.paused .demo-prog i { animation-play-state: paused; }
+@keyframes demo-fill { to { width: 100%; } }
+.demo-ctas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.demo-frame { margin: 0; border: 1px solid var(--line-2); border-radius: var(--r-lg); overflow: hidden; background: var(--surface); box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.75); }
+.demo-bar { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-bottom: 1px solid var(--line); }
+.demo-bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--surface-3); }
+.demo-bar span { margin-left: 10px; font: 500 11px/1 var(--mono); color: var(--faint); }
+.demo-frame img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: cover; object-position: top left; transition: opacity 0.25s; }
+.demo-frame img.swap { opacity: 0.2; }
+@media (max-width: 900px) {
+  .demo { grid-template-columns: 1fr; }
+}

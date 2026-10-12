@@ -395,6 +395,13 @@ def retrieve(
         take(sid)
     picked.sort(key=final.get, reverse=True)
 
+    # For each sub-question: did one of its own top hits make it into the results?
+    chosen = set(picked)
+    coverage = [
+        any(c.segment_id in chosen for c in sorted(run.values(), key=lambda c: c.rrf, reverse=True)[:5])
+        for run in runs[1:]
+    ]
+
     terms = set(tokens(query))
     hits = hydrate_segments(
         picked,
@@ -427,6 +434,7 @@ def retrieve(
             "expanded": expand,
             "expanded_hits": sum(1 for h in hits if h.get("via")),
             "subqueries": len(subqueries) if len(subqueries) > 1 else 0,
+            "subquery_coverage": coverage,
             "candidates": len(fused),
         },
     )

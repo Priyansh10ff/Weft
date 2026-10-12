@@ -45,54 +45,72 @@ const VIA_PHRASE = {
 };
 
 function whyLine(hit, indexOf) {
+  const conf = hit.confidence != null
+    ? h("span", { class: "ev-conf", title: `Extraction confidence ${pct(hit.confidence)}` }, h("i", { style: `--w: ${Math.round(hit.confidence * 100)}%` }), pct(hit.confidence))
+    : null;
+  const title = hit.score != null ? `Relevance ${pct(Math.min(1, hit.score))}` : null;
   if (hit.via) {
     const from = indexOf.get(hit.via.from_segment_id);
     const phrase = VIA_PHRASE[hit.via.relation]?.[hit.via.direction === "out" ? "in" : "out"] || `Linked (${hit.via.relation})`;
-    const shared = hit.via.shared_entities?.length ? ` · shared: ${hit.via.shared_entities.slice(0, 3).join(", ")}` : "";
-    return h("p", { class: "ev-why via" }, icon("graph", 13), `${phrase} ${from != null ? `#${from + 1}` : "another hit"}${shared}`);
+    const shared = hit.via.shared_entities?.length ? ` · shared: ${hit.via.shared_entities.slice(0, 2).join(", ")}` : "";
+    return h("div", { class: "ev-why via", title }, h("span", { class: "ev-why-text" }, icon("graph", 13), `${phrase} ${from != null ? `#${from + 1}` : "another hit"}${shared}`), conf);
   }
   const s = hit.signals || {};
   const parts = [];
   if (s.dense_rank) parts.push("meaning");
-  if (s.keyword_rank) parts.push("keywords");
-  if (s.matched_entities?.length) parts.push(`entities: ${s.matched_entities.slice(0, 3).join(", ")}`);
-  return parts.length ? h("p", { class: "ev-why" }, `Matched on ${parts.join(" · ")}`) : null;
+  if (s.keyword_rank) parts.push("keyword");
+  const ents = (s.matched_entities || []).slice(0, 2);
+  return h("div", { class: "ev-why", title },
+    h("span", { class: "ev-why-text" }, parts.join(" · "), ents.length ? [parts.length ? " · " : "", h("b", {}, ents.join(", "))] : null),
+    conf);
+}
+
+// The one line worth reading: the matched sentence, the matched on-screen
+// text, the opening text, or what was shown.
+function quoteFor(hit) {
+  const span = hit.matched_span;
+  if (span?.text) return { who: span.speaker, text: `“${span.text}”` };
+  if (hit.matched_regions?.length) return { label: "On screen", text: hit.matched_regions.slice(0, 2).map((r) => `“${r.text}”`).join("  ") };
+  if (hit.transcript) return { text: `“${hit.transcript}”` };
+  if (hit.visual_summary) return { label: "Shown", text: hit.visual_summary };
+  return null;
+}
+
+function thumbBadge(hit) {
+  const span = hit.matched_span;
+  if (span?.start_seconds != null) return fmtClock(span.start_seconds);
+  const page = /^Page (\d+)/.exec(hit.timestamp || "");
+  if (page) return `p.${page[1]}`;
+  if (hit.modality === "video" || hit.modality === "audio") return (hit.timestamp || "").split(" - ")[0] || null;
+  return null;
 }
 
 function evidenceCard(hit, index, cited, query, indexOf = new Map()) {
   const span = hit.matched_span;
   const at = span?.start_seconds ?? null;
   const open = () => hit.segment_id && openEvidence(hit.segment_id, { query, at });
+  const quote = quoteFor(hit);
   const card = h("article", {
     class: `ev-card mod-${hit.modality}${cited ? " cited" : ""}${hit.via ? " linked" : ""}`, tabindex: "0", role: "button",
-    "aria-label": `Evidence ${index + 1}: ${hit.source || "unknown source"} ${hit.timestamp || ""}`,
+    "aria-label": `Evidence ${index + 1}: ${modalityLabel(hit.modality)}, ${hit.source || "unknown source"} ${hit.timestamp || ""}`,
     id: `ev-${index}`,
     onclick: open,
     onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } },
   },
-  thumb(hit.frame_path, hit.modality),
+  thumb(hit.frame_path, hit.modality, "", { badge: thumbBadge(hit), preview: hit.frame_path ? null : (hit.transcript || hit.visual_summary) }),
   h("div", { class: "ev-body" },
     h("div", { class: "ev-head" },
       h("span", { class: "ev-n" }, String(index + 1)),
-      modChip(hit.modality),
       h("span", { class: "ev-source", title: hit.source || "" }, hit.source || "Unknown source"),
       span?.start_seconds != null
         ? h("span", { class: "loc loc-exact", title: `Window ${hit.timestamp || ""}` }, `at ${fmtClock(span.start_seconds)}`)
         : hit.timestamp ? h("span", { class: "loc" }, hit.timestamp) : null,
     ),
-    span?.text
-      ? h("p", { class: "ev-text" }, span.speaker ? h("span", { class: "speaker-inline" }, `${span.speaker}: `) : null, `“${truncate(span.text, 220)}”`)
-      : hit.transcript ? h("p", { class: "ev-text" }, truncate(hit.transcript, 260)) : null,
-    hit.matched_regions?.length
-      ? h("p", { class: "ev-visual" }, h("span", { class: "faint" }, "On screen: "), hit.matched_regions.map((r) => `“${truncate(r.text, 80)}”`).join("  "))
-      : hit.visual_summary ? h("p", { class: "ev-visual" }, h("span", { class: "faint" }, "Shown: "), truncate(hit.visual_summary, 200)) : null,
+    quote ? h("p", { class: "ev-text" },
+      quote.who ? h("span", { class: "speaker-inline" }, `${quote.who} · `) : null,
+      quote.label ? h("span", { class: "faint" }, `${quote.label}: `) : null,
+      truncate(quote.text, 240)) : null,
     whyLine(hit, indexOf),
-    h("div", { class: "ev-foot" },
-      hit.score != null ? h("span", { class: "num", title: "Fused, confidence-weighted relevance" }, `score ${pct(Math.min(1, hit.score))}`) : h("span", { class: "num" }, `match ${pct(hit.similarity_score)}`),
-      hit.confidence != null ? meter(hit.confidence) : null,
-      (hit.speakers || []).slice(0, 2).map((name) => h("span", { class: "chip chip-sm chip-speaker" }, name)),
-      (hit.entities || []).slice(0, 4).map((name) => h("span", { class: "chip chip-sm" }, name)),
-    ),
   ));
   return card;
 }
@@ -240,8 +258,15 @@ export function renderAsk(root, params) {
       if (results[index]?.segment_id) openEvidence(results[index].segment_id, { query, at: results[index].matched_span?.start_seconds ?? null });
     };
     const mods = h("span", { class: "answer-mods" }, modalities.map((m) => h("span", { class: `mod mod-${m}`, title: modalityLabel(m) }, h("i", { class: "dot" }))));
+    // Each part of a multi-part question, ticked when retrieval found evidence for it.
+    const coverage = response.strategy?.subquery_coverage || [];
     const subqs = response.subqueries?.length
-      ? h("div", { class: "subqs" }, h("span", { class: "faint" }, "Answered in parts:"), response.subqueries.map((q) => h("span", { class: "chip chip-sm" }, truncate(q, 70))))
+      ? h("div", { class: "subqs" }, response.subqueries.map((q, i) => {
+        const ok = coverage[i] !== false;
+        const text = q.replace(/\s*\([^)]*\)\s*$/, "");
+        return h("span", { class: `part${ok ? " ok" : ""}`, title: ok ? "Evidence found for this part" : "No direct evidence for this part" },
+          ok ? icon("check", 13) : h("i", { class: "part-miss" }), truncate(text.charAt(0).toUpperCase() + text.slice(1), 70));
+      }))
       : null;
     const meta = (badge, method) => h("div", { class: "answer-meta" }, badge, method ? h("span", { class: "faint" }, method) : null, strategyNote(response), mods);
 
@@ -274,11 +299,34 @@ export function renderAsk(root, params) {
         const cited = new Set((answer.sources || []).filter((s) => s.cited).map((s) => s.evidence_index - 1));
         cards.forEach((card, i) => card.classList.toggle("cited", cited.has(i)));
         const method = answer.method === "llm" ? "Synthesized by Gemini" : "Extractive summary (no LLM key configured)";
+        const citedHits = [...cited].sort((a, b) => a - b).filter((i) => results[i]);
+        const formats = new Set(citedHits.map((i) => results[i].modality)).size;
+        const copyText = () => {
+          const refs = citedHits.map((i) => `[${i + 1}] ${results[i].source}${results[i].timestamp ? ` · ${results[i].timestamp}` : ""}`);
+          return `${answer.answer}\n\nSources:\n${refs.join("\n")}`;
+        };
+        const copy = async (text, done) => {
+          try { await navigator.clipboard.writeText(text); toast(done, "ok"); } catch { toast("Copy isn't available in this browser.", "err"); }
+        };
         answerHost.removeAttribute("aria-busy");
         fill(answerHost,
-          meta(h("span", { class: `badge ${answer.grounded ? "ok" : "warn"}` }, icon(answer.grounded ? "check" : "alert", 13), answer.grounded ? "Grounded in evidence" : "Not supported by evidence"), method),
+          h("div", { class: "answer-top" },
+            meta(h("span", { class: `badge ${answer.grounded ? "ok" : "warn"}` }, icon(answer.grounded ? "check" : "alert", 13), answer.grounded ? "Grounded" : "Not supported by evidence"),
+              `${method}${citedHits.length ? ` · ${citedHits.length} source${citedHits.length === 1 ? "" : "s"}, ${formats} format${formats === 1 ? "" : "s"}` : ""}`),
+            h("div", { class: "answer-actions" },
+              h("button", { class: "btn btn-ghost btn-sm", type: "button", title: "Copy the answer with its sources", onclick: () => copy(copyText(), "Answer copied.") }, icon("copy", 14), "Copy"),
+              h("button", { class: "btn btn-ghost btn-sm", type: "button", title: "Ask again", onclick: () => run(query) }, icon("refresh", 14), "Regenerate"),
+              h("button", { class: "btn btn-ghost btn-sm", type: "button", title: "Copy a link to this question", onclick: () => copy(location.href, "Link copied.") }, icon("link", 14), "Link"),
+            ),
+          ),
           renderAnswerText(answer.answer, results, focusEvidence),
           subqs,
+          citedHits.length ? h("div", { class: "answer-sources" }, citedHits.map((i) => {
+            const hit = results[i];
+            const where = thumbBadge(hit) || hit.timestamp;
+            return h("button", { class: `src-chip mod-${hit.modality}`, type: "button", title: `Open ${hit.source}${hit.timestamp ? ` at ${hit.timestamp}` : ""}`, onclick: () => focusEvidence(i) },
+              h("span", { class: "src-n" }, String(i + 1)), h("span", { class: "src-name" }, hit.source), where ? h("span", { class: "loc" }, where) : null);
+          })) : null,
         );
       },
       failAnswer(message) {

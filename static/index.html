@@ -19,6 +19,7 @@
     <div class="wrap">
       <a class="brand" href="/" aria-label="Weft home"><img src="/static/img/weft-mark.svg" alt="" />weft</a>
       <nav aria-label="Primary">
+        <a href="#demo">Demo</a>
         <a href="#how">How it works</a>
         <a href="#modalities">Modalities</a>
         <a href="#trace">Traceability</a>
@@ -54,6 +55,48 @@
           </div>
         </div>
         <div class="loom" data-loom></div>
+      </div>
+    </section>
+
+    <section class="block" id="demo">
+      <div class="wrap">
+        <div class="block-head">
+          <p class="eyebrow">See it in action</p>
+          <h2>One question, four kinds of evidence.</h2>
+          <p>Ask in plain language. Weft finds what was said, shown and written, links it, and lets you check every claim at its source.</p>
+        </div>
+        <div class="demo" data-demo>
+          <div class="demo-steps" role="tablist" aria-label="Product walkthrough">
+            <button class="demo-step" type="button" role="tab" aria-selected="true" data-shot="/static/img/screens/ask.jpg" data-url="/app#/ask">
+              <span class="demo-t"><b>01</b>Ask across every format</span>
+              <span class="demo-d">Multi-part questions are split, searched by meaning, keyword and entity, and answered with numbered citations.</span>
+              <span class="demo-prog"><i></i></span>
+            </button>
+            <button class="demo-step" type="button" role="tab" aria-selected="false" data-shot="/static/img/screens/evidence.jpg" data-url="/app#/ask · evidence">
+              <span class="demo-t"><b>02</b>Open the exact evidence</span>
+              <span class="demo-d">The video at the cited second, the PDF at the page, the matched region of a screenshot outlined.</span>
+              <span class="demo-prog"><i></i></span>
+            </button>
+            <button class="demo-step" type="button" role="tab" aria-selected="false" data-shot="/static/img/screens/graph.jpg" data-url="/app#/graph">
+              <span class="demo-t"><b>03</b>See how it connects</span>
+              <span class="demo-d">Slides linked to what was said over them, charts to the documents that state the same numbers.</span>
+              <span class="demo-prog"><i></i></span>
+            </button>
+            <button class="demo-step" type="button" role="tab" aria-selected="false" data-shot="/static/img/screens/evaluate.jpg" data-url="/app#/evaluate">
+              <span class="demo-t"><b>04</b>Check it against text-only RAG</span>
+              <span class="demo-d">A gold question set scored for four retrieval systems, question by question.</span>
+              <span class="demo-prog"><i></i></span>
+            </button>
+            <div class="demo-ctas">
+              <a class="btn btn-primary" href="/app#/ask?tour=1">Take the tour</a>
+              <a class="btn" href="/app">Open workspace</a>
+            </div>
+          </div>
+          <figure class="demo-frame" role="tabpanel">
+            <div class="demo-bar" aria-hidden="true"><i></i><i></i><i></i><span data-demo-url>weft · /app#/ask</span></div>
+            <img data-demo-shot src="/static/img/screens/ask.jpg" alt="The Weft workspace answering a question with cited evidence" width="1440" height="900" loading="lazy" decoding="async" />
+          </figure>
+        </div>
       </div>
     </section>
 

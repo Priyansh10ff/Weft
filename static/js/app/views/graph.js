@@ -31,8 +31,9 @@ export function renderGraph(root, params, id) {
   let disposed = false;
   let frame = 0;
   const depth = Math.min(3, Math.max(1, Number(params.get("depth")) || 1));
-  let showEntities = params.get("entities") !== "0";
   const hidden = new Set((params.get("hide") || "").split(",").filter(Boolean));
+  // Node kinds switched off with the filter chips: a modality, or "entity".
+  const off = new Set((params.get("off") || "").split(",").filter(Boolean));
   let data = null;
   let selected = null;
 
@@ -69,17 +70,14 @@ export function renderGraph(root, params, id) {
       id ? h("div", { class: "chips", role: "group", "aria-label": "Depth" }, [1, 2, 3].map((d) => h("button", {
         class: "chip", type: "button", "aria-pressed": String(depth === d),
         onclick: () => navigate(`#/graph/${encodeURIComponent(id)}?depth=${d}`),
-      }, `Depth ${d}`))) : h("button", {
-        class: "chip", type: "button", "aria-pressed": String(showEntities),
-        onclick: () => { showEntities = !showEntities; setParam("entities", showEntities ? null : "0"); load(); },
-      }, "Entities"),
+      }, `Depth ${d}`))) : null,
     );
   }
 
   async function load() {
     renderControls();
     try {
-      data = id ? await api.graph(id, depth) : await api.graphOverview({ entities: showEntities });
+      data = id ? await api.graph(id, depth) : await api.graphOverview({ entities: true });
       if (disposed) return;
       if (!data.nodes.length) {
         fill(stage, emptyState({
@@ -99,7 +97,8 @@ export function renderGraph(root, params, id) {
 
   function draw() {
     cancelAnimationFrame(frame);
-    const nodes = data.nodes.map((n) => ({ ...n }));
+    const kindOf = (n) => (n.kind === "entity" ? "entity" : n.modality);
+    const nodes = data.nodes.filter((n) => n.id === data.center || !off.has(kindOf(n))).map((n) => ({ ...n }));
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const edges = data.edges.filter((e) => !hidden.has(e.relation) && byId.has(e.source) && byId.has(e.target))
       .map((e) => ({ ...e, s: byId.get(e.source), t: byId.get(e.target) }));
@@ -112,12 +111,15 @@ export function renderGraph(root, params, id) {
     for (const e of edges) { neighbours.get(e.source).add(e.target); neighbours.get(e.target).add(e.source); }
 
     // ---- layout: a small force simulation, animated while it settles.
-    const W = 1000, H = 640;
+    // 1000 units across; the height follows the canvas shape (taller on phones).
+    const cw = stage.clientWidth || 1000;
+    const ch = Math.max(cw * 0.62, Math.min(520, window.innerHeight * 0.62));
+    const W = 1000, H = Math.round((1000 * ch) / cw);
     nodes.forEach((n, i) => {
       const a = (i / nodes.length) * Math.PI * 2;
       const r = n.id === data.center ? 0 : 180 + (i % 7) * 18;
       n.x = W / 2 + Math.cos(a) * r; n.y = H / 2 + Math.sin(a) * r; n.vx = 0; n.vy = 0;
-      n.r = n.kind === "entity" ? 4 + Math.min(8, Math.sqrt(degree.get(n.id) || 1) * 1.6) : 6.5;
+      n.r = n.kind === "entity" ? 5 + Math.min(8, Math.sqrt(degree.get(n.id) || 1) * 1.7) : 7.5;
     });
     const center = byId.get(data.center);
     if (center) { center.x = W / 2; center.y = H / 2; center.r += 3; }
@@ -136,7 +138,7 @@ export function renderGraph(root, params, id) {
       edgeLayer.append(e.line);
     }
     for (const n of nodes) {
-      const g = el("g", { class: `g-node ${n.kind}${n.modality ? ` mod-${n.modality}` : ""}${n.id === data.center ? " center" : ""}`, tabindex: "0", role: "button", "aria-label": n.label });
+      const g = el("g", { class: `g-node ${n.kind}${n.modality ? ` mod-${n.modality}` : ""}${n.id === data.center ? " center" : ""}${(degree.get(n.id) || 0) >= 4 ? " big" : ""}`, tabindex: "0", role: "button", "aria-label": n.label });
       if (n.kind === "entity") g.append(el("rect", { x: -n.r, y: -n.r, width: n.r * 2, height: n.r * 2, rx: 2.5 }));
       else g.append(el("circle", { r: n.r }));
       const label = el("text", { class: "g-label", x: n.r + 5, y: 4 });
@@ -162,14 +164,14 @@ export function renderGraph(root, params, id) {
     let alpha = 1;
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
     function tick() {
-      const k = Math.sqrt((W * H) / Math.max(1, nodes.length)) * 0.55;
+      const k = Math.sqrt((W * H) / Math.max(1, nodes.length)) * 0.85;
       for (let i = 0; i < nodes.length; i++) {
         const a = nodes[i];
         for (let j = i + 1; j < nodes.length; j++) {
           const b = nodes[j];
           let dx = a.x - b.x, dy = a.y - b.y;
           let d2 = dx * dx + dy * dy || 0.01;
-          if (d2 > 90000) continue;
+          if (d2 > 160000) continue;
           const f = (k * k) / d2 * 0.06 * alpha;
           dx *= f; dy *= f;
           a.vx += dx; a.vy += dy; b.vx -= dx; b.vy -= dy;
@@ -178,7 +180,7 @@ export function renderGraph(root, params, id) {
       for (const e of edges) {
         const dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        const rest = e.relation === "mentions" ? k * 0.9 : k * 0.7;
+        const rest = e.relation === "mentions" ? k * 1.05 : k * 0.8;
         const f = ((d - rest) / d) * 0.05 * alpha;
         e.s.vx += dx * f; e.s.vy += dy * f; e.t.vx -= dx * f; e.t.vy -= dy * f;
       }
@@ -193,20 +195,62 @@ export function renderGraph(root, params, id) {
       }
       alpha *= 0.985;
     }
-    if (reduced) { for (let i = 0; i < 300; i++) tick(); paint(); }
-    else {
+    // ---- pan, zoom and drag
+    let scale = 1, tx = 0, ty = 0;
+    // Labels keep their on-screen size whatever the zoom or canvas width.
+    const applyView = (animate = false) => {
+      view.classList.toggle("easing", animate);
+      view.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+      const px = (svg.clientWidth || W) / W;
+      svg.style.setProperty("--zs", String(scale * px));
+    };
+    // Zoom so every node (and an entity's label) fits the canvas.
+    function fit(animate = true) {
+      if (!nodes.length) return;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const n of nodes) {
+        x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r);
+        x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r);
+      }
+      // Labels keep a fixed on-screen size, so leave room for the longest
+      // entity label in screen pixels, converted to graph units.
+      const px = (svg.clientWidth || stage.clientWidth || W) / W;
+      const longest = Math.max(0, ...nodes.filter((n) => n.kind === "entity").map((n) => n.label.length));
+      // On a phone that would squash the graph, so cap it; labels may then need a pan.
+      const labelRoom = Math.min((longest * 7.5 + 12) / px, W * 0.22);
+      const pad = 40 / px;
+      scale = Math.max(0.3, Math.min(2.4, (W - pad * 2 - labelRoom) / Math.max(1, x1 - x0), (H - pad * 2 - 40) / Math.max(1, y1 - y0)));
+      x1 += labelRoom / scale;
+      tx = (W - (x0 + x1) * scale) / 2;
+      ty = (H + 40 - (y0 + y1) * scale) / 2;  // the toolbar takes the top 40 units
+      applyView(animate);
+    }
+    function zoomBy(factor) {
+      const cx = W / 2, cy = H / 2;
+      const gx = (cx - tx) / scale, gy = (cy - ty) / scale;
+      scale = Math.min(4, Math.max(0.4, scale * factor));
+      tx = cx - gx * scale; ty = cy - gy * scale;
+      applyView(true);
+    }
+    function centerOn(n) {
+      scale = Math.max(scale, 1.6);
+      tx = W / 2 - n.x * scale; ty = H / 2 - n.y * scale;
+      applyView(true);
+    }
+
+    for (let i = 0; i < (reduced ? 300 : 140); i++) tick();
+    paint();
+    fit(false);
+    if (!reduced) {
       const run = () => {
         if (disposed) return;
         for (let i = 0; i < 2; i++) tick();
         paint();
         if (alpha > 0.02) frame = requestAnimationFrame(run);
+        else fit(true);
       };
-      run();
+      frame = requestAnimationFrame(run);
     }
-
-    // ---- pan, zoom and drag
-    let scale = 1, tx = 0, ty = 0;
-    const applyView = () => view.setAttribute("transform", `translate(${tx},${ty}) scale(${scale})`);
     const toGraph = (event) => {
       const rect = svg.getBoundingClientRect();
       const px = ((event.clientX - rect.left) / rect.width) * W;
@@ -220,6 +264,7 @@ export function renderGraph(root, params, id) {
       tx = px - gx * scale; ty = py - gy * scale;
       applyView();
     }, { passive: false });
+    svg.addEventListener("dblclick", () => fit(true));
 
     let drag = null, dragMoved = false;
     function startDrag(event, n) {
@@ -272,21 +317,12 @@ export function renderGraph(root, params, id) {
     }
 
     function renderSide() {
-      const mods = new Map();
-      for (const n of nodes) if (n.modality) mods.set(n.modality, (mods.get(n.modality) || 0) + 1);
       const rels = new Map();
       for (const e of data.edges) rels.set(e.relation, (rels.get(e.relation) || 0) + 1);
-      const entityCount = nodes.filter((n) => n.kind === "entity").length;
 
       fill(side,
         selected ? detail(selected) : null,
         h("div", { class: "card card-pad graph-legend" },
-          h("p", { class: "section-label" }, "Evidence"),
-          h("ul", { class: "legend-list" },
-            MODALITIES.filter((m) => mods.has(m)).map((m) => h("li", { class: `mod mod-${m}` },
-              h("i", { class: "dot" }), h("span", {}, MOD_LABEL[m]), h("span", { class: "num faint" }, mods.get(m)))),
-            entityCount ? h("li", {}, h("i", { class: "legend-entity" }), h("span", {}, "Entity"), h("span", { class: "num faint" }, entityCount)) : null,
-          ),
           h("p", { class: "section-label" }, "Links"),
           h("ul", { class: "legend-list" }, RELATIONS.filter(([key]) => rels.has(key)).map(([key, label, hint]) => h("li", {},
             h("label", { class: "legend-toggle", title: hint },
@@ -300,7 +336,7 @@ export function renderGraph(root, params, id) {
             ),
             h("span", { class: "num faint" }, rels.get(key)),
           ))),
-          h("p", { class: "graph-hint faint" }, "Click a node for details. Drag to move it, drag the background to pan, scroll to zoom."),
+          h("p", { class: "graph-hint faint" }, "Click a node for details. Drag to move it, drag the background to pan, scroll to zoom, double-click to fit."),
         ),
       );
     }
@@ -325,7 +361,52 @@ export function renderGraph(root, params, id) {
       );
     }
 
-    fill(stage, svg);
+    // ---- toolbar: search, kind filters, zoom
+    const counts = new Map();
+    for (const n of data.nodes) counts.set(kindOf(n), (counts.get(kindOf(n)) || 0) + 1);
+    const results = h("ul", { class: "g-results", role: "listbox", hidden: true });
+    const search = h("input", { class: "g-search-input", type: "search", placeholder: "Find a file or entity…", "aria-label": "Find a node", autocomplete: "off" });
+    const pick = (n) => { search.value = ""; results.hidden = true; select(n); centerOn(n); };
+    const matches = () => {
+      const q = search.value.trim().toLowerCase();
+      return q ? nodes.filter((n) => n.label.toLowerCase().includes(q)).slice(0, 8) : [];
+    };
+    search.addEventListener("input", () => {
+      const found = matches();
+      fill(results, found.length
+        ? found.map((n) => h("li", {}, h("button", { type: "button", class: `g-result${n.modality ? ` mod-${n.modality}` : ""}`, onclick: () => pick(n) },
+          n.kind === "entity" ? h("i", { class: "legend-entity" }) : h("i", { class: "dot" }), h("span", {}, n.label))))
+        : h("li", { class: "faint g-none" }, "No match"));
+      results.hidden = !search.value.trim();
+    });
+    search.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { const first = matches()[0]; if (first) pick(first); }
+      if (event.key === "Escape") { search.value = ""; results.hidden = true; }
+    });
+    const kinds = [...MODALITIES, "entity"].filter((k) => counts.has(k));
+    const toggleKind = (k) => {
+      if (off.has(k)) off.delete(k); else off.add(k);
+      setParam("off", [...off].join(","));
+      draw();
+    };
+    const toolbar = h("div", { class: "g-toolbar" },
+      h("div", { class: "g-search" }, icon("search", 15), search, results),
+      h("div", { class: "g-kinds", role: "group", "aria-label": "Show node types" }, kinds.map((k) => h("button", {
+        class: `chip g-kind${k === "entity" ? "" : ` mod mod-${k}`}`, type: "button", "aria-pressed": String(!off.has(k)),
+        title: `${off.has(k) ? "Show" : "Hide"} ${k === "entity" ? "entities" : MOD_LABEL[k]}`, onclick: () => toggleKind(k),
+      }, k === "entity" ? h("i", { class: "legend-entity" }) : h("i", { class: "dot" }), `${k === "entity" ? "Entities" : k === "json" ? "JSON" : MOD_LABEL[k]} ${counts.get(k)}`))),
+    );
+    const zoom = h("div", { class: "g-zoom" },
+      h("button", { type: "button", "aria-label": "Zoom in", onclick: () => zoomBy(1.25) }, "+"),
+      h("button", { type: "button", "aria-label": "Zoom out", onclick: () => zoomBy(1 / 1.25) }, "−"),
+      h("button", { type: "button", "aria-label": "Fit to view", class: "g-fit", onclick: () => fit(true) }, "Fit"),
+    );
+    const meta = h("p", { class: "g-meta" }, `${nodes.length} nodes · ${edges.length} links`);
+
+    fill(stage, h("div", { class: "graph-canvas" }, toolbar, svg, zoom, meta));
+    applyView();  // now that the svg has a size, the label scale can be measured
+    const onResize = () => { if (disposed || !svg.isConnected) window.removeEventListener("resize", onResize); else applyView(); };
+    window.addEventListener("resize", onResize);
     renderSide();
     renderLinks(edges);
   }

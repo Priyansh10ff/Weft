@@ -56,6 +56,9 @@ const ICONS = {
   alert: '<path d="M8 5v3.5M8 11h.01"/><circle cx="8" cy="8" r="6"/>',
   file: '<path d="M4 1.5h5L12.5 5v9.5h-8.5z"/><path d="M9 1.5V5h3.5"/>',
   layers: '<path d="m8 2 6 3-6 3-6-3 6-3Z"/><path d="m2 8 6 3 6-3M2 11l6 3 6-3"/>',
+  copy: '<rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M3 10.5V3.5A1 1 0 0 1 4 2.5h6.5"/>',
+  refresh: '<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5"/>',
+  link: '<path d="M6.5 9.5 9.5 6.5M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1"/>',
   external: '<path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M11 9.5v4H2.5V5h4"/>',
 };
 
@@ -139,16 +142,25 @@ export function emptyState({ title, body, action }) {
   return h("div", { class: "empty" }, h("h3", {}, title), body ? h("p", {}, body) : null, action || null);
 }
 
-export function thumb(src, modality, alt = "") {
-  const box = h("div", { class: `thumb mod-${modality || "x"}` });
-  const glyph = h("span", { class: "thumb-glyph" }, modalityLabel(modality).slice(0, 3).toUpperCase());
+/**
+ * Evidence thumbnail: the keyframe or page render when there is one, a
+ * preview of the record's own text when there is not (JSON, notes), or the
+ * modality glyph. ``badge`` (a timestamp or "p.3") sits in the corner.
+ */
+export function thumb(src, modality, alt = "", { badge = null, preview = null } = {}) {
+  const box = h("div", { class: `thumb mod-${modality || "x"}`, "aria-hidden": alt ? null : "true" });
+  const fallback = () => preview
+    ? h("span", { class: "thumb-text" }, truncate(preview, 90))
+    : h("span", { class: "thumb-glyph" }, modalityLabel(modality).slice(0, 3).toUpperCase());
   if (src) {
     const img = h("img", { src, alt, loading: "lazy", decoding: "async" });
-    img.addEventListener("error", () => { img.remove(); box.append(glyph); }, { once: true });
+    img.addEventListener("error", () => { img.remove(); box.prepend(fallback()); box.classList.add("thumb-textual"); }, { once: true });
     box.append(img);
   } else {
-    box.append(glyph);
+    box.append(fallback());
+    if (preview) box.classList.add("thumb-textual");
   }
+  if (badge) box.append(h("span", { class: "thumb-badge" }, badge));
   return box;
 }
 

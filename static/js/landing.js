@@ -91,3 +91,44 @@ window.addEventListener("scroll", onScroll, { passive: true });
 onScroll();
 
 document.querySelectorAll("[data-year]").forEach((node) => { node.textContent = String(new Date().getFullYear()); });
+
+// "See it in action": four steps that cycle through real screenshots.
+function setupDemo(root) {
+  const steps = [...root.querySelectorAll(".demo-step")];
+  const img = root.querySelector("[data-demo-shot]");
+  const url = root.querySelector("[data-demo-url]");
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const STEP_MS = 5000;
+  root.style.setProperty("--demo-ms", `${STEP_MS}ms`);
+  steps.forEach((s) => { const pre = new Image(); pre.src = s.dataset.shot; });
+  let index = 0;
+  let timer = null;
+  let paused = false;
+  const show = (next, { auto = false } = {}) => {
+    index = next;
+    steps.forEach((step, i) => {
+      step.setAttribute("aria-selected", String(i === next));
+      const bar = step.querySelector(".demo-prog i");
+      if (bar) { bar.style.animation = "none"; void bar.offsetWidth; bar.style.animation = ""; }
+    });
+    img.classList.add("swap");
+    setTimeout(() => { img.src = steps[next].dataset.shot; img.classList.remove("swap"); }, auto ? 150 : 0);
+    url.textContent = `weft · ${steps[next].dataset.url}`;
+    schedule();
+  };
+  const schedule = () => {
+    clearTimeout(timer);
+    if (reduced || paused) return;
+    timer = setTimeout(() => show((index + 1) % steps.length, { auto: true }), STEP_MS);
+  };
+  steps.forEach((step, i) => step.addEventListener("click", () => show(i)));
+  root.addEventListener("mouseenter", () => { paused = true; root.classList.add("paused"); clearTimeout(timer); });
+  root.addEventListener("mouseleave", () => { paused = false; root.classList.remove("paused"); show(index); });
+  // Only cycle while the section is on screen.
+  new IntersectionObserver(([entry]) => {
+    if (entry.isIntersecting) schedule(); else clearTimeout(timer);
+  }, { threshold: 0.3 }).observe(root);
+}
+
+const demo = document.querySelector("[data-demo]");
+if (demo) setupDemo(demo);

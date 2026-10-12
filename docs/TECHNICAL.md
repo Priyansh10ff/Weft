@@ -136,7 +136,7 @@ Weft/
 │   ├── app.html                    Workspace shell
 │   ├── css/                        weft.css (tokens, primitives), landing.css, app.css
 │   ├── fonts/                      Geist and Geist Mono (woff2, SIL Open Font License)
-│   ├── img/weft-mark.svg
+│   ├── img/                        weft-mark.svg, screens/ (landing demo screenshots)
 │   └── js/
 │       ├── landing.js
 │       └── app/
@@ -356,7 +356,7 @@ Query parameters on every upload: `background` (return 202 with a job), `force` 
 ### Query
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/query` | `{ query, limit, hybrid, expand, decompose, modalities }` → answer, hits with explanations, sub-questions, strategy |
+| POST | `/query` | `{ query, limit, hybrid, expand, decompose, modalities }` → answer, hits with explanations, sub-questions, strategy (including `subquery_coverage`: per sub-question, whether one of its top 5 hits is in the final results) |
 | POST | `/query/stream` | Same request as `/query`, answered as server-sent events: `retrieval` (query, sub-questions, strategy, results), `delta` (`{text}`, repeated), `answer` (final answer and sources), `done`. A failure after retrieval is sent as `error` |
 | POST | `/query/compare` | Weft results next to the text-only baseline for the same question |
 
