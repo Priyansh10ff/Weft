@@ -99,6 +99,9 @@ class HardeningMiddleware(BaseHTTPMiddleware):
             response.headers.setdefault(name, value)
         if not request.url.path.startswith(_DOCS_PATHS):
             response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        if request.url.path in ("/", "/app") or request.url.path.startswith("/static/"):
+            # Revalidate the frontend on every load so a changed file is never served stale.
+            response.headers.setdefault("Cache-Control", "no-cache")
 
         elapsed = (time.perf_counter() - started) * 1000
         if not request.url.path.startswith(("/static/", "/uploads/", "/derived/", "/frames/")):
