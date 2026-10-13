@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+from app.services.llm import Image, LLMError, LLMNotConfigured, MediaFile
 
 _log = logging.getLogger(__name__)
 
@@ -38,11 +39,11 @@ MIME_TYPES = {
 }
 
 
-class GeminiError(RuntimeError):
+class GeminiError(LLMError):
     """Gemini is unavailable, misconfigured, or returned unusable output."""
 
 
-class GeminiNotConfigured(GeminiError):
+class GeminiNotConfigured(GeminiError, LLMNotConfigured):
     """No ``GEMINI_API_KEY``; callers should fall back to an offline path."""
 
 
@@ -152,6 +153,34 @@ def file_part(path: Path, *, client: Any | None = None, timeout_seconds: float =
     if str(getattr(getattr(uploaded, "state", None), "name", "ACTIVE")) == "FAILED":
         raise GeminiError(f"Gemini could not process {path.name}")
     return uploaded
+
+
+def convert(contents: list[Any], *, client: Any | None = None) -> list[Any]:
+    """Provider-neutral content (see ``llm``) to Gemini parts."""
+    out: list[Any] = []
+    for item in contents:
+        if isinstance(item, Image):
+            from google.genai import types
+
+            out.append(types.Part.from_bytes(data=item.data, mime_type=item.mime_type))
+        elif isinstance(item, MediaFile):
+            out.append(file_part(item.path, client=client))
+        else:
+            out.append(item)
+    return out
+
+
+def stream_text(contents: list[Any], *, system: str | None = None, client: Any | None = None) -> Any:
+    """Yield text chunks from a streamed response."""
+    from google.genai import types
+
+    active = client or get_client()
+    config = types.GenerateContentConfig(system_instruction=system, temperature=0.1)
+    stream = active.models.generate_content_stream(model=get_settings().gemini_model, contents=contents, config=config)
+    for chunk in stream:
+        text = getattr(chunk, "text", None)
+        if text:
+            yield text
 
 
 def reset_client() -> None:

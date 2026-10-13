@@ -96,13 +96,15 @@ function renderStatus(reachable) {
   if (!host) return;
   const s = store.stats;
   const p = store.health?.providers;
+  const model = providerName(p?.llm);
   const row = (label, on, value) => h("li", {}, h("i", { class: `dot ${on ? "on" : "off"}` }), h("span", {}, label), value ? h("span", { class: "faint" }, value) : null);
   fill(host, 
     reachable
       ? h("ul", { class: "status-list" },
-        row("Vision", p?.vision, p?.vision ? "Gemini" : "off"),
+        row("Model", Boolean(model), model || "none"),
+        row("Vision", p?.vision, p?.vision ? model : "off"),
         row("Transcription", p?.transcription, p?.transcription ? "Groq" : "off"),
-        row("Speakers", p?.speakers, p?.speakers ? "on" : "off"),
+        row("Speakers", p?.speakers, p?.speakers ? "on" : p?.llm === "claude" ? "needs Gemini" : "off"),
         row("Entities", true, p?.entities === "llm" ? "LLM" : "patterns"),
       )
       : h("p", { class: "status-down" }, h("i", { class: "dot off" }), "Server unreachable"),
@@ -165,3 +167,8 @@ window.addEventListener("unhandledrejection", (event) => {
 
 store.refresh().finally(route);
 setInterval(() => { if (!document.hidden) store.refresh(); }, 30000);
+
+/** Display name of the configured model provider, or "" when none. */
+export function providerName(id) {
+  return { claude: "Claude", gemini: "Gemini" }[id] || "";
+}

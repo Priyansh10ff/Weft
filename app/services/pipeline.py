@@ -22,7 +22,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.schemas.knowledge import KnowledgeNode, MediaModality, SourceAsset
-from app.services import gemini
+from app.services import llm
 from app.services.audio_processor import AudioProcessingError, process_audio
 from app.services.entity_extractor import extract_entities
 from app.services.image_processor import ImageProcessingError, process_image
@@ -185,7 +185,7 @@ def run_pipeline(
     if not nodes:
         raise ProcessingFailed(
             f"No speech, text or visual content could be extracted from {asset.filename}. "
-            "Check that GEMINI_API_KEY / GROQ_API_KEY are set and the file is not empty."
+            "Check that a model key (GEMINI_API_KEY or ANTHROPIC_API_KEY) and GROQ_API_KEY are set and the file is not empty."
         )
     result = PipelineResult(nodes=nodes)
 
@@ -195,19 +195,21 @@ def run_pipeline(
         and nodes
     ):
         report("attributing speakers", 0.6)
-        if not settings.gemini_enabled:
-            result.warnings.append("Speaker attribution skipped: GEMINI_API_KEY is not set.")
+        if not settings.llm_enabled:
+            result.warnings.append("Speaker attribution skipped: no model key is set.")
+        elif not llm.supports_media(settings.llm_provider):
+            result.warnings.append("Speaker attribution skipped: it needs Gemini (Claude does not accept audio).")
         else:
             try:
                 result.enrichment["speaker_segments"] = attach_speakers(nodes, path, asset.modality)
-            except gemini.GeminiError as exc:
+            except llm.LLMError as exc:
                 _log.warning("Speaker attribution failed for %s: %s", asset.filename, exc)
                 result.warnings.append(f"Speaker attribution failed: {exc}")
 
     if settings.entity_extraction and nodes:
         report("extracting entities", 0.8)
         result.enrichment["entity_method"] = attach_entities(nodes)
-        if result.enrichment["entity_method"] == "heuristic" and settings.gemini_enabled:
+        if result.enrichment["entity_method"] == "heuristic" and settings.llm_enabled:
             result.warnings.append("LLM entity extraction failed; used pattern-based fallback.")
 
     if any(node.attributes.get("visual_extraction_failed") for node in nodes):

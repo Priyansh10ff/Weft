@@ -50,7 +50,7 @@ Text-only RAG reads transcripts and document text. It never sees the slide on sc
 - Semantic, keyword (BM25 for exact identifiers like `max_retries=5`) and entity search, fused by rank
 - Linked evidence in other formats ranked up, with the link that brought it in
 - Every hit says why it was returned and where the match is: the sentence and its timestamp, or the region on the image
-- Answers streamed from Gemini with numbered citations, or a short quoted summary when no key is configured
+- Answers streamed from Claude or Gemini with numbered citations, or a short quoted summary when no key is configured
 
 **Evaluation**
 - 24 questions with known evidence plus look-alike decoy files
@@ -76,7 +76,7 @@ Text-only RAG reads transcripts and document text. It never sees the slide on sc
 | ![Entity timeline](docs/screenshots/entity.png) | ![Library](docs/screenshots/library.png) |
 | **Entity timeline:** one entity across JSON, video, PDF and image | **Library:** uploads, sources and background jobs |
 
-Screenshots use the bundled sample data with no API keys configured, so the answer above is the extractive summary rather than a Gemini answer.
+Screenshots use the bundled sample data with no API keys configured, so the answer above is the extractive summary rather than a model-written answer.
 
 ## Results
 
@@ -133,7 +133,10 @@ Settings come from environment variables or `.env`. The API keys are optional: e
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GEMINI_API_KEY` | | Vision for keyframes, images and PDF pages, typed entities, speaker labels, written answers. Without it: no visual descriptions, image uploads refused, pattern-based entities, extractive answers. [Get one](https://aistudio.google.com/apikey) |
+| `GEMINI_API_KEY` | | Gemini for vision on keyframes, images and PDF pages, typed entities, speaker labels and written answers. [Get one](https://aistudio.google.com/apikey) |
+| `ANTHROPIC_API_KEY` | | Claude for the same jobs except speaker labels (Claude does not take audio). [Get one](https://console.anthropic.com/settings/keys) |
+| `LLM_PROVIDER` | `auto` | The one model provider: `claude`, `gemini`, or `auto` (Claude if its key is set, else Gemini). With neither key: no visual descriptions, image uploads refused, pattern-based entities, extractive answers |
+| `CLAUDE_MODEL` / `GEMINI_MODEL` | `claude-sonnet-5-5` / `gemini-3.6-flash` | Model used for every call |
 | `GROQ_API_KEY` | | Fast Whisper transcription. Without it: local faster-whisper. [Get one](https://console.groq.com/keys) |
 | `WEFT_API_KEY` | | Require this key on every upload, question, delete and evaluation run |
 | `CORS_ORIGINS` | | Origins allowed to call the API from a browser. Empty means same origin only |
@@ -192,7 +195,7 @@ One FastAPI process serves the API, the website and the media, and runs the back
 |---|---|
 | API | Python, FastAPI, Uvicorn |
 | Storage | SQLite (WAL, FTS5), ChromaDB with MiniLM-L6 embeddings |
-| Models | Google Gemini (vision, entities, speakers, answers), Groq Whisper (transcription) |
+| Models | Claude or Google Gemini, one at a time (vision, entities, answers; speakers need Gemini), Groq Whisper (transcription) |
 | Media | OpenCV, PyMuPDF, pypdf, Pillow |
 | Frontend | Plain HTML, CSS and ES modules, no build step |
 | Packaging | Docker, docker compose, GitHub Actions |
@@ -221,7 +224,7 @@ pip install -r requirements-dev.txt
 pytest tests
 ```
 
-The suite needs no network or API keys: Gemini and Groq are disabled and a deterministic embedding replaces MiniLM. It covers scene detection, every processor, the repository, uploads and jobs, linking, retrieval, the answer stream, the API, evaluation and the security middleware. GitHub Actions runs it on Python 3.10 and 3.12, then builds the Docker image, loads the sample data and asks a question.
+The suite needs no network or API keys: Claude, Gemini and Groq are disabled and a deterministic embedding replaces MiniLM. It covers scene detection, every processor, the repository, uploads and jobs, linking, retrieval, the answer stream, the API, evaluation and the security middleware. GitHub Actions runs it on Python 3.10 and 3.12, then builds the Docker image, loads the sample data and asks a question.
 
 ## Security
 
@@ -237,7 +240,7 @@ Details in [TECHNICAL.md §12](docs/TECHNICAL.md#12-security-and-operations).
 Version 0.3. Everything above is implemented and tested. Known limitations:
 
 - Cross-modal questions are the weakest question type in the evaluation (25% complete at top 5, against 50% for hybrid).
-- Visual evidence needs a Gemini key. Without it, image uploads are refused and slides and pages carry no description.
+- Visual evidence needs a Claude or Gemini key. Without it, image uploads are refused and slides and pages carry no description.
 - The gold set is small and built on sample data, so the numbers may not transfer to other corpora.
 - One process with SQLite: built for local or team use, not many concurrent users.
 

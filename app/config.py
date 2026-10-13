@@ -43,6 +43,9 @@ def _int(name: str, default: int) -> int:
 class Settings:
     gemini_api_key: str | None
     gemini_model: str
+    anthropic_api_key: str | None
+    claude_model: str
+    llm_provider_setting: str
     groq_api_key: str | None
 
     # Video segmentation
@@ -71,14 +74,41 @@ class Settings:
     log_level: str
 
     @property
+    def llm_provider(self) -> str | None:
+        """The one provider in use: ``"claude"``, ``"gemini"`` or ``None``.
+
+        ``LLM_PROVIDER=claude`` or ``gemini`` picks that provider (``None`` if
+        its key is missing). ``auto`` (the default) prefers Claude when its key
+        is set, then Gemini.
+        """
+        choice = self.llm_provider_setting
+        if choice == "claude":
+            return "claude" if self.anthropic_api_key else None
+        if choice == "gemini":
+            return "gemini" if self.gemini_api_key else None
+        if self.anthropic_api_key:
+            return "claude"
+        if self.gemini_api_key:
+            return "gemini"
+        return None
+
+    @property
+    def llm_enabled(self) -> bool:
+        return self.llm_provider is not None
+
+    @property
     def gemini_enabled(self) -> bool:
-        return bool(self.gemini_api_key)
+        """Gemini is the active provider."""
+        return self.llm_provider == "gemini"
 
 
 def get_settings() -> Settings:
     return Settings(
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
+        claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5"),
+        llm_provider_setting=(os.getenv("LLM_PROVIDER") or "auto").strip().lower(),
         groq_api_key=os.getenv("GROQ_API_KEY") or None,
         scene_sample_seconds=_float("SCENE_SAMPLE_SECONDS", 0.5),
         scene_cut_threshold=_float("SCENE_CUT_THRESHOLD", 0.04),

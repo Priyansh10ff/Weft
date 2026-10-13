@@ -44,7 +44,8 @@ Related: [PRODUCT.md](./PRODUCT.md) (overview) · [PRD.md](./PRD.md) (requiremen
          ▲
          │ external calls, only when keys are set
 ┌────────┴──────────────────────────────────────────┐
-│ Gemini: vision, entities, speakers, answers       │
+│ Claude or Gemini (one): vision, entities, answers │
+│ Gemini only: speaker labels                       │
 │ Groq Whisper: transcription (local faster-whisper │
 │ fallback)                                         │
 └───────────────────────────────────────────────────┘
@@ -53,7 +54,8 @@ Related: [PRODUCT.md](./PRODUCT.md) (overview) · [PRD.md](./PRD.md) (requiremen
 - **One process, one port.** FastAPI serves the API, the website and the media files, and runs the background job workers.
 - **SQLite is the system of record.** Every field shown after retrieval comes from SQLite. Chroma only maps embeddings to segment IDs and can be rebuilt with `python -m app.cli reindex`.
 - **One write path.** Every processor returns `KnowledgeNode` objects. `services/ingestion.py` is the only code that turns them into records and writes them, in one transaction.
-- **Degrades without keys.** Without Gemini, video keyframes and PDF pages are ingested without visual descriptions (speech and the text layer still are), entities come from patterns and answers are extractive. Standalone image uploads need Gemini and are refused with 422 without it. Without Groq, transcription uses local faster-whisper.
+- **One model provider.** `services/llm.py` routes every model call to `claude.py` or `gemini.py`, chosen by `LLM_PROVIDER` (`auto` prefers Claude when `ANTHROPIC_API_KEY` is set, then Gemini). Callers pass provider-neutral content (text, `Image`, `MediaFile`). Claude does not take audio or video, so speaker attribution runs only on Gemini and is skipped with a warning on Claude.
+- **Degrades without keys.** Without a model key, video keyframes and PDF pages are ingested without visual descriptions (speech and the text layer still are), entities come from patterns and answers are extractive. Standalone image uploads need a model key and are refused with 422 without it. Without Groq, transcription uses local faster-whisper.
 
 ## 2. Stack
 
@@ -64,7 +66,8 @@ Related: [PRODUCT.md](./PRODUCT.md) (overview) · [PRD.md](./PRD.md) (requiremen
 | Models and validation | Pydantic 2 (`extra="forbid"` on request bodies) |
 | System of record | SQLite (standard library) in WAL mode, FTS5 for keyword search |
 | Vector index | ChromaDB 1.x, default embedding function (all-MiniLM-L6-v2, ONNX) |
-| Vision, entities, speakers, answers | `google-genai` (Gemini, model from `GEMINI_MODEL`) |
+| Vision, entities, answers | `anthropic` (Claude, `CLAUDE_MODEL`) or `google-genai` (Gemini, `GEMINI_MODEL`), one at a time |
+| Speaker labels | `google-genai` (Gemini only) |
 | Transcription | `groq` (Whisper large-v3), `faster-whisper` fallback |
 | Video | OpenCV (decoding, frame sampling, scene detection) |
 | PDF | PyMuPDF (page renders, embedded images), pypdf (text layer) |
@@ -111,12 +114,14 @@ Weft/
 │   │   ├── scene_detector.py       Frame sampling, scene cuts, sentence-aligned windows
 │   │   ├── video_processor.py      Transcript + scenes + keyframe vision → nodes
 │   │   ├── audio_processor.py      Groq Whisper, faster-whisper fallback
-│   │   ├── image_processor.py      Gemini vision: description, text blocks, regions, entities
+│   │   ├── image_processor.py      Vision: description, text blocks, regions, entities
 │   │   ├── pdf_processor.py        Text layer + rendered page analysis per page
 │   │   ├── json_processor.py       Records and plain text → nodes
 │   │   ├── speaker_attribution.py  Speaker turns and names
-│   │   ├── entity_extractor.py     Typed entities (Gemini, pattern fallback)
-│   │   ├── gemini.py               Shared client, JSON responses, retries
+│   │   ├── entity_extractor.py     Typed entities (model, pattern fallback)
+│   │   ├── llm.py                  Provider choice and neutral content, routes every model call
+│   │   ├── claude.py               Claude client, JSON responses, streaming, image blocks
+│   │   ├── gemini.py               Gemini client, JSON responses, streaming, file parts, retries
 │   │   ├── ingestion.py            Nodes → records, the single write path
 │   │   ├── linker.py               Cross-modal and temporal links
 │   │   ├── graph.py                Entity timelines, neighbourhoods, corpus overview
@@ -246,17 +251,17 @@ Enrichment failures (steps 2 and 3) are stored as warnings on the source and nev
 1. Transcribe the audio track into timestamped speech segments with confidence.
 2. Sample a frame every `SCENE_SAMPLE_SECONDS` (0.5 s) and compare it with the current scene's anchor frame. A new scene starts when the changed-pixel fraction exceeds `SCENE_CUT_THRESHOLD` (0.04) and the change lasts at least `SCENE_MIN_SECONDS` (2 s).
 3. Split scenes longer than `WINDOW_MAX_SECONDS` (30 s) into windows at sentence boundaries, so no sentence is cut.
-4. Save one keyframe per scene and describe it with Gemini (description, text blocks with boxes, regions, entities). A keyframe within `KEYFRAME_DUP_HAMMING` (6) bits of an earlier one by perceptual hash reuses that analysis. Vision calls run on `VISION_WORKERS` (4) threads.
+4. Save one keyframe per scene and describe it with the model (description, text blocks with boxes, regions, entities). A keyframe within `KEYFRAME_DUP_HAMMING` (6) bits of an earlier one by perceptual hash reuses that analysis. Vision calls run on `VISION_WORKERS` (4) threads.
 5. Emit one segment per window with its speech, its speech spans, the keyframe and its analysis.
 
 ### Audio (`audio_processor.py`)
 Groq Whisper large-v3 when `GROQ_API_KEY` is set, otherwise local faster-whisper. One segment per speech span with timestamps and confidence.
 
 ### Image (`image_processor.py`)
-One Gemini call returns a description, the OCR text, text blocks and visual regions with normalised bounding boxes, and typed entities. PNG and JPEG only.
+One model call returns a description, the OCR text, text blocks and visual regions with normalised bounding boxes, and typed entities. PNG and JPEG only.
 
 ### PDF (`pdf_processor.py`)
-One segment per page. The exact text layer comes from the PDF. With Gemini, the rendered page is analysed for diagrams, charts and text blocks, and embedded images are saved.
+One segment per page. The exact text layer comes from the PDF. With a model key, the rendered page is analysed for diagrams, charts and text blocks, and embedded images are saved.
 
 ### JSON and text (`json_processor.py`)
 A JSON array of records (or one object) becomes one segment per record, using `text`, `content` or `transcript`, plus optional `visual_summary`, `locator`, `source` and `entities`. A `.txt` file becomes one note.
@@ -302,9 +307,9 @@ The text-only baseline (`search_text_only`) uses the `segments_text_only` collec
 
 ## 8. Answers (`services/answer_synthesizer.py`)
 
-The top hits are formatted as numbered evidence blocks (source, modality, locator, speaker, text, what was shown, matched span) and sent to Gemini with the sub-questions. The model must cite evidence by number and say when the evidence does not support an answer. Without a key, or if the call fails, an extractive answer is returned with `method: "fallback-extractive"`: the matched sentence (with its timestamp and speaker), the matched on-screen text, or the opening text of the top three hits, one short quoted line each, with the same `(Evidence N)` citations, so the website links them like a written answer.
+The top hits are formatted as numbered evidence blocks (source, modality, locator, speaker, text, what was shown, matched span) and sent to the model with the sub-questions. The model must cite evidence by number and say when the evidence does not support an answer. Without a key, or if the call fails, an extractive answer is returned with `method: "fallback-extractive"`: the matched sentence (with its timestamp and speaker), the matched on-screen text, or the opening text of the top three hits, one short quoted line each, with the same `(Evidence N)` citations, so the website links them like a written answer.
 
-`stream_answer` is the streaming variant used by `POST /query/stream` and the Ask page. It asks Gemini for plain prose with inline `(Evidence N)` citations and yields each chunk as it arrives, then a final answer whose cited sources are parsed from the text. If the stream fails before any text, it falls back to `synthesize_answer`. If it fails midway, the text written so far is kept.
+`stream_answer` is the streaming variant used by `POST /query/stream` and the Ask page. It asks the model for plain prose with inline `(Evidence N)` citations and yields each chunk as it arrives, then a final answer whose cited sources are parsed from the text. If the stream fails before any text, it falls back to `synthesize_answer`. If it fails midway, the text written so far is kept.
 
 ## 9. Evaluation (`app/evaluation/`)
 
@@ -393,7 +398,10 @@ All settings come from environment variables, or `.env` in the project root. `ap
 
 | Key | Default | Purpose |
 |---|---|---|
-| `GEMINI_API_KEY` | | Vision, entities, speakers, answers |
+| `LLM_PROVIDER` | `auto` | `claude`, `gemini`, or `auto` (Claude if its key is set, else Gemini) |
+| `ANTHROPIC_API_KEY` | | Claude: vision, entities, answers |
+| `CLAUDE_MODEL` | `claude-sonnet-5-5` | Claude model for every call |
+| `GEMINI_API_KEY` | | Gemini: vision, entities, speakers, answers |
 | `GEMINI_MODEL` | `gemini-3.6-flash` | Gemini model for every call |
 | `GROQ_API_KEY` | | Whisper transcription. Without it, local faster-whisper |
 | `MEDIA_STORAGE_ROOT` | `./data` | Uploads, derived files, evaluation reports |
@@ -451,7 +459,7 @@ The image runs as a non-root user, keeps everything under the `/data` volume (`M
 python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt -r requirements-dev.txt
-cp .env.example .env                 # add GEMINI_API_KEY and GROQ_API_KEY (optional)
+cp .env.example .env                 # add ANTHROPIC_API_KEY or GEMINI_API_KEY, and GROQ_API_KEY (all optional)
 uvicorn main:app --reload            # http://127.0.0.1:8000
 ```
 
@@ -469,7 +477,7 @@ Open `http://127.0.0.1:8000/app` and choose **Load sample data** in the Library,
 ## 14. Testing
 
 - **Runner:** pytest. API tests use FastAPI's TestClient against the real app with a temporary database and index.
-- **No network, no keys.** Tests use a deterministic hashing embedding instead of MiniLM and stub every Gemini and Groq call.
+- **No network, no keys.** Tests use a deterministic hashing embedding instead of MiniLM and stub every Claude, Gemini and Groq call.
 - **Suites:**
   - `test_scene_detector`: scene cuts, windows, sentence alignment
   - `test_extraction`, `test_enrichment`: processors, entity extraction, speaker attribution
@@ -479,6 +487,7 @@ Open `http://127.0.0.1:8000/app` and choose **Load sample data** in the Library,
   - `test_linker`: each link type, thresholds, `same_as`, timelines, neighbourhood and overview graph API
   - `test_retrieval`: decomposition, fusion, exact identifiers, expansion, spans and regions
   - `test_knowledge_api`: every knowledge endpoint, the answer stream (offline, with a fake Gemini stream, and a failing one)
+  - `test_claude`: provider selection, JSON calls (thinking blocks skipped), image blocks, the answer stream, speakers skipped on Claude, `/health`
   - `test_evaluation`: evidence matching, metrics, dataset validity, end-to-end ranking, the eval API
   - `test_security`: headers, request IDs, API key on writes, content signatures, streaming size limit
 - **Retrieval changes** are checked with `python -m app.evaluation run` at k = 3 and k = 5 with the real embedding model before they are kept.
@@ -487,7 +496,7 @@ Open `http://127.0.0.1:8000/app` and choose **Load sample data** in the Library,
 
 | Limitation | Effect | Planned fix |
 |---|---|---|
-| Vision needs Gemini | Without a key, image uploads are refused and slides and pages have no description or OCR, so visual evidence can't be found | Local OCR fallback |
+| Vision needs a model key | Without a key, image uploads are refused and slides and pages have no description or OCR, so visual evidence can't be found | Local OCR fallback |
 | Cross-modal Complete@5 is 25% vs 50% for hybrid | One cross-modal question in four loses a required piece to a related ticket | Modality-aware selection, better linker coverage |
 | Small gold set on sample data | Numbers may not transfer to other corpora | Second gold set from real recordings, evaluation on user corpora |
 | Speaker names come from a model | Possible misattribution | Names only when the recording reveals them, lower confidence |

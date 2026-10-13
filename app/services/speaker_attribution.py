@@ -19,7 +19,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from app.services import gemini
+from app.services import llm
 
 _log = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def attribute_speakers(
 ) -> list[dict[str, Any] | None]:
     """Return one ``{"label", "name", "confidence"}`` (or ``None``) per speech segment.
 
-    Raises ``gemini.GeminiError`` on failure; callers treat speakers as optional.
+    Raises ``llm.LLMError`` on failure; callers treat speakers as optional.
     """
     if not speech:
         return []
@@ -63,14 +63,13 @@ def attribute_speakers(
         }
         for i, seg in enumerate(speech)
     ]
-    part = gemini.file_part(media_path, client=client)
-    raw = gemini.generate_json(
-        [part, f"Transcript segments:\n{json.dumps(numbered, ensure_ascii=False)}"],
+    raw = llm.generate_json(
+        [llm.MediaFile(media_path), f"Transcript segments:\n{json.dumps(numbered, ensure_ascii=False)}"],
         system=_SYSTEM,
         client=client,
     )
     if not isinstance(raw, dict):
-        raise gemini.GeminiError("Speaker attribution returned a non-object response.")
+        raise llm.LLMError("Speaker attribution returned a non-object response.")
 
     names: dict[str, str | None] = {}
     for speaker in raw.get("speakers") or []:

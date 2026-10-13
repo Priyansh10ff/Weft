@@ -163,12 +163,12 @@ def _fallback_answer(query: str, hits: list[dict[str, Any]]) -> SynthesizedAnswe
     return SynthesizedAnswer(answer=answer, grounded=bool(sentences), sources=sources, method="fallback-extractive")
 
 
-def _gemini_client() -> Any | None:
-    from app.services import gemini
+def _llm_client() -> Any | None:
+    from app.services import llm
 
     try:
-        return gemini.get_client()
-    except gemini.GeminiError:
+        return llm.get_client()
+    except llm.LLMError:
         return None
 
 
@@ -213,16 +213,16 @@ def synthesize_answer(
     if not hits:
         return _fallback_answer(query, hits)
 
-    active_client = client or _gemini_client()
+    active_client = client or _llm_client()
     if active_client is None:
         return _fallback_answer(query, hits)
 
     prompt = _prompt(query, hits, subqueries) + "\n\nRespond with the JSON object described in your instructions."
 
     try:
-        from app.services import gemini
+        from app.services import llm
 
-        parsed = gemini.generate_json([prompt], system=_SYSTEM_PROMPT, client=active_client)
+        parsed = llm.generate_json([prompt], system=_SYSTEM_PROMPT, client=active_client)
         if not isinstance(parsed, dict):
             return _fallback_answer(query, hits)
         answer_text = str(parsed.get("answer", "")).strip()
@@ -281,7 +281,7 @@ def stream_answer(
     client: Any | None = None,
     subqueries: list[str] | None = None,
 ) -> Iterator[tuple[str, Any]]:
-    """Yield ``("delta", text)`` chunks as Gemini writes, then ``("answer", SynthesizedAnswer)``.
+    """Yield ``("delta", text)`` chunks as the model writes, then ``("answer", SynthesizedAnswer)``.
 
     Without a client, or if the stream fails before producing text, the one
     final ``answer`` event carries the same result ``synthesize_answer`` would.
@@ -290,26 +290,18 @@ def stream_answer(
     if not hits:
         yield "answer", _fallback_answer(query, hits)
         return
-    active_client = client or _gemini_client()
+    active_client = client or _llm_client()
     if active_client is None:
         yield "answer", _fallback_answer(query, hits)
         return
 
     pieces: list[str] = []
     try:
-        from google.genai import types
+        from app.services import llm
 
-        from app.config import get_settings
-
-        config = types.GenerateContentConfig(system_instruction=_STREAM_PROMPT, temperature=0.1)
-        stream = active_client.models.generate_content_stream(
-            model=get_settings().gemini_model, contents=[_prompt(query, hits, subqueries)], config=config
-        )
-        for chunk in stream:
-            text = getattr(chunk, "text", None)
-            if text:
-                pieces.append(text)
-                yield "delta", text
+        for text in llm.stream_text([_prompt(query, hits, subqueries)], system=_STREAM_PROMPT, client=active_client):
+            pieces.append(text)
+            yield "delta", text
     except Exception:
         if not pieces:
             yield "answer", synthesize_answer(query, hits, client=active_client, subqueries=subqueries)

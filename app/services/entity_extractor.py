@@ -16,7 +16,7 @@ import re
 from typing import Any
 
 from app.config import get_settings
-from app.services import gemini
+from app.services import llm
 from app.services.image_processor import ENTITY_TYPES
 
 _log = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ def _llm_batch(texts: list[str], client: Any | None) -> list[list[Entity]]:
     items = [{"i": i, "text": t[:_MAX_CHARS_PER_ITEM]} for i, t in enumerate(texts)]
     import json
 
-    raw = gemini.generate_json(
+    raw = llm.generate_json(
         [f"Snippets:\n{json.dumps(items, ensure_ascii=False)}"], system=_SYSTEM, client=client
     )
     result: list[list[Entity]] = [[] for _ in texts]
@@ -124,13 +124,13 @@ def extract_entities(
     settings = get_settings()
     if not texts:
         return [], "none"
-    if client is not None or settings.gemini_enabled:
+    if client is not None or settings.llm_enabled:
         try:
             out: list[list[Entity]] = []
             size = settings.entity_batch_size
             for start in range(0, len(texts), size):
                 out.extend(_llm_batch(texts[start : start + size], client))
             return out, "llm"
-        except gemini.GeminiError as exc:
+        except llm.LLMError as exc:
             _log.warning("LLM entity extraction failed, using heuristics: %s", exc)
     return [heuristic_entities(t) for t in texts], "heuristic"

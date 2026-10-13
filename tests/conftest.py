@@ -98,13 +98,15 @@ def store() -> Iterator[FakeVectorStore]:
 def _offline(monkeypatch, tmp_path):
     """No test may reach a real provider or the repo's ./data directory."""
     monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("LLM_PROVIDER", "auto")
     monkeypatch.setenv("GROQ_API_KEY", "")
     monkeypatch.setenv("MEDIA_STORAGE_ROOT", str(tmp_path / "media"))
-    from app.services import gemini
+    from app.services import llm
 
-    gemini.reset_client()
+    llm.reset_clients()
     yield
-    gemini.reset_client()
+    llm.reset_clients()
 
 
 class FakeGemini:

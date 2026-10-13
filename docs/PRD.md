@@ -56,7 +56,7 @@ Weft ingests every format into one evidence store with exact locations, links re
 - Each scene keeps its speech and a description of the keyframe, with text blocks and regions located on the frame.
 - A keyframe that repeats an earlier one (the same slide again) reuses its analysis and is linked to it.
 
-**I2. As a user, I can upload audio** (MP3, WAV, M4A, AAC, FLAC, OGG) and get timestamped speech segments with speakers labelled where Gemini is configured.
+**I2. As a user, I can upload audio** (MP3, WAV, M4A, AAC, FLAC, OGG) and get timestamped speech segments with speakers labelled where Gemini is the configured provider.
 
 **I3. As a user, I can upload an image** (PNG, JPEG) and get a description, its text as located blocks, visual regions and typed entities.
 
@@ -94,7 +94,7 @@ Weft ingests every format into one evidence store with exact locations, links re
 
 **Q4. Each result explains itself**: which searches matched it, the sentence or text region that matched, its speaker, and its confidence.
 
-**Q5. The answer cites its evidence** with numbered references and says plainly when the evidence does not support an answer. Without a Gemini key, an extractive answer quotes the top three pieces of evidence, one line each, with the same numbered citations.
+**Q5. The answer cites its evidence** with numbered references and says plainly when the evidence does not support an answer. Without a model key (Claude or Gemini), an extractive answer quotes the top three pieces of evidence, one line each, with the same numbered citations.
 
 **Q5a. As a user, I see the evidence as soon as it is found** and the answer appears as it is written, with citations linked once it is complete.
 
@@ -149,7 +149,7 @@ Weft ingests every format into one evidence store with exact locations, links re
 | **Integrity** | A source, its segments, entities and links are committed in one SQLite transaction. The vector index is keyed by segment ID and can be rebuilt from SQLite |
 | **Resilience** | Enrichment failures (speakers, entities) never fail an upload. They are stored as warnings on the source. Missing API keys degrade video, PDF, entity and answer features without failing them. Image uploads need Gemini |
 | **Security** | Optional API key on every write, constant-time comparison. Same-origin by default. Security headers and a strict Content Security Policy on the website. Uploads checked by extension, size (while streaming) and file signature. Unhandled errors never return a stack trace |
-| **Privacy** | Files and derived artefacts stay on local disk. Only content sent to Gemini or Groq leaves the machine, and only when their keys are set. `/health` reports which providers are on, never the keys |
+| **Privacy** | Files and derived artefacts stay on local disk. Only content sent to the model provider (Claude or Gemini) or Groq leaves the machine, and only when their keys are set. `/health` reports which providers are on, never the keys |
 | **Performance** | Retrieval p50 under 1 s on the sample corpus on a laptop. Long uploads run in the background. Repeated keyframes skip the vision call |
 | **Quality** | Weft must score at or above text-only RAG on every overall metric of the gold set, and changes to retrieval are judged on the evaluation |
 | **Accessibility** | Keyboard navigation, visible focus, labelled controls, readable contrast on the dark theme, layouts from 360 px wide |
@@ -175,7 +175,7 @@ Measured on the bundled gold set with the MiniLM embedding model, top 5.
 |---|---|
 | **v0.2** | Ingestion, linking, retrieval, evaluation, website |
 | **v0.3 (current)** | Graph view, streaming answers, guided tour, Docker, CI, API key and hardening |
-| **Next** | Cross-modal retrieval on a par with hybrid, testing on real recordings with Gemini and Groq configured |
+| **Next** | Cross-modal retrieval on a par with hybrid, testing on real recordings with a model provider and Groq configured |
 | **Later** | Evaluation on user corpora (FR26), larger embedding models, a second gold set from real recordings, read access control |
 
 ## 10. Risks and open questions

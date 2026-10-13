@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from app.schemas.knowledge import KnowledgeNode, MediaModality
-from app.services import gemini
+from app.services import llm
 from app.services.storage import storage_root
 
 
@@ -125,14 +125,12 @@ def analyze_image(image_path: Path, *, client: Any | None = None) -> dict[str, A
     if media_type is None:
         raise ImageProcessingError("Only PNG and JPEG images are supported.")
     try:
-        from google.genai import types
-
-        part = types.Part.from_bytes(data=image_path.read_bytes(), mime_type=media_type)
-        raw = gemini.generate_json([_PROMPT, part], client=client)
-    except gemini.GeminiError as exc:
+        part = llm.Image(data=image_path.read_bytes(), mime_type=media_type)
+        raw = llm.generate_json([_PROMPT, part], client=client)
+    except llm.LLMError as exc:
         raise ImageProcessingError(f"Vision analysis failed for {image_path.name}: {exc}") from exc
     except ImportError as exc:
-        raise ImageProcessingError("google-genai is required for image analysis.") from exc
+        raise ImageProcessingError("The model provider's SDK is required for image analysis.") from exc
     except OSError as exc:
         raise ImageProcessingError(f"Unable to read {image_path.name}: {exc}") from exc
     return normalize_analysis(raw)

@@ -4,7 +4,7 @@
 import { api, queryStream } from "../api.js";
 import { openEvidence } from "../evidence.js";
 import { h, clear, icon, modChip, meter, pct, thumb, truncate, skeletonLines, emptyState, toast, modalityLabel, fmtClock, fill, put } from "../ui.js";
-import { navigate, store } from "../main.js";
+import { navigate, providerName, store } from "../main.js";
 import { startTour } from "../tour.js";
 
 const EXAMPLES = [
@@ -291,14 +291,14 @@ export function renderAsk(root, params) {
       appendDelta(text) {
         if (!streamed) {
           streamed = h("p", { class: "answer-text streaming" });
-          fill(answerHost, meta(h("span", { class: "badge" }, h("span", { class: "spinner", "aria-hidden": "true" }), "Writing answer"), "Gemini"), streamed);
+          fill(answerHost, meta(h("span", { class: "badge" }, h("span", { class: "spinner", "aria-hidden": "true" }), "Writing answer"), providerName(store.health?.providers?.llm) || "Model"), streamed);
         }
         streamed.append(text);
       },
       setAnswer(answer) {
         const cited = new Set((answer.sources || []).filter((s) => s.cited).map((s) => s.evidence_index - 1));
         cards.forEach((card, i) => card.classList.toggle("cited", cited.has(i)));
-        const method = answer.method === "llm" ? "Synthesized by Gemini" : "Extractive summary (no LLM key configured)";
+        const method = answer.method === "llm" ? `Synthesized by ${providerName(store.health?.providers?.llm) || "the model"}` : "Extractive summary (no LLM key configured)";
         const citedHits = [...cited].sort((a, b) => a - b).filter((i) => results[i]);
         const formats = new Set(citedHits.map((i) => results[i].modality)).size;
         const copyText = () => {

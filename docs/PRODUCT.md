@@ -106,7 +106,8 @@ Weft is not a hosted SaaS, a video editor, a general chatbot or a replacement fo
 | API and server | Python, FastAPI, Uvicorn |
 | System of record | SQLite (WAL) with FTS5 keyword search |
 | Vector index | ChromaDB with the MiniLM-L6 embedding model |
-| Vision, entities, speakers, answers | Google Gemini |
+| Vision, entities, answers | Claude or Google Gemini, one provider at a time |
+| Speaker labels | Google Gemini (Claude does not take audio) |
 | Transcription | Groq Whisper, with local faster-whisper as fallback |
 | Video and documents | OpenCV, PyMuPDF, pypdf, Pillow |
 | Frontend | Plain HTML, CSS and ES modules served by FastAPI |
